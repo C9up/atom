@@ -1,0 +1,12 @@
+[package]
+name = "atom-engine-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "WASM bindings for the Atom decimal engine"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+atom-engine = { path = "../atom-engine" }
+wasm-bindgen = "0.2"

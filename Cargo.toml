@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/atom-engine",
+  "crates/atom-engine-napi",
+  "crates/atom-engine-wasm",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/C9up/atom"
