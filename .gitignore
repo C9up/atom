@@ -1,0 +1,14 @@
+# Build artifacts
+target/
+node_modules/
+dist/
+
+# Prebuilt NAPI binaries — produced by `pnpm build:napi` and CI, never committed.
+# The binary is platform-specific and gets staled silently if tracked in git;
+# consumers reproduce it locally or via the package's CI workflow.
+*.node
+
+coverage/
+wasm/*.js
+wasm/*.wasm
+wasm/*_bg.*
