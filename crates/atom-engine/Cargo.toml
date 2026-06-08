@@ -1,0 +1,11 @@
+[package]
+name = "atom-engine"
+version = "0.1.3"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Exact decimal arithmetic engine in Rust for Atom"
+
+[dependencies]
+num-bigint = "0.4"
+num-traits = "0.2"
