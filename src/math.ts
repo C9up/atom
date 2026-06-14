@@ -52,9 +52,152 @@ export function formatDecimal(int: bigint, scale: number): string {
 	return out;
 }
 
+export function addTs(a: string, b: string): string {
+	const da = parseDecimal(a);
+	const db = parseDecimal(b);
+	const [ai, bi, scale] = alignScale(da, db);
+	return formatDecimal(ai + bi, scale);
+}
+
+export function subTs(a: string, b: string): string {
+	const da = parseDecimal(a);
+	const db = parseDecimal(b);
+	const [ai, bi, scale] = alignScale(da, db);
+	return formatDecimal(ai - bi, scale);
+}
+
+export function mulTs(a: string, b: string): string {
+	const da = parseDecimal(a);
+	const db = parseDecimal(b);
+	return formatDecimal(da.int * db.int, da.scale + db.scale);
+}
+
+export function divTs(a: string, b: string, precision: number): string {
+	const da = parseDecimal(a);
+	const db = parseDecimal(b);
+	if (db.int === 0n) {
+		throw new Error("Division by zero");
+	}
+	const numerator = da.int * pow10BigInt(precision + db.scale);
+	const denominator = db.int * pow10BigInt(da.scale);
+	const q = numerator / denominator;
+	return formatDecimal(q, precision);
+}
+
+export function cmpTs(a: string, b: string): -1 | 0 | 1 {
+	const da = parseDecimal(a);
+	const db = parseDecimal(b);
+	const [ai, bi] = alignScale(da, db);
+	if (ai < bi) return -1;
+	if (ai > bi) return 1;
+	return 0;
+}
+
+/**
+ * Align two parsed decimals to the same scale by multiplying the less-precise
+ * one by `10^(scaleDelta)`. Exported so `Decimal.ts` can reuse it — previously
+ * both files had their own copy under different names (`alignScale` vs
+ * `alignScaleParts`), which is a maintenance hazard.
+ */
+export function alignScale(
+	a: ParsedDecimal,
+	b: ParsedDecimal,
+): [bigint, bigint, number] {
+	if (a.scale === b.scale) return [a.int, b.int, a.scale];
+	if (a.scale > b.scale) {
+		const factor = pow10BigInt(a.scale - b.scale);
+		return [a.int, b.int * factor, a.scale];
+	}
+	const factor = pow10BigInt(b.scale - a.scale);
+	return [a.int * factor, b.int, b.scale];
+}
+
 /** Exact `10^exp` as a `bigint`. Exported — single definition for the whole TS side. */
 export function pow10BigInt(exp: number): bigint {
 	let acc = 1n;
 	for (let i = 0; i < exp; i++) acc *= 10n;
 	return acc;
+}
+
+/**
+ * Pure-TS modulo — fallback for when the native engine is unavailable. The
+ * Rust `rem` path should be preferred when `isNativeAvailable()`.
+ */
+export function modTs(a: string, b: string): string {
+	const da = parseDecimal(a);
+	const db = parseDecimal(b);
+	if (db.int === 0n) {
+		throw new Error("Division by zero");
+	}
+	const [ai, bi, scale] = alignScale(da, db);
+	return formatDecimal(ai % bi, scale);
+}
+
+/**
+ * Pure-TS integer exponentiation with truncating div for negative exponents.
+ * Mirrors the Rust `pow` contract so the two paths produce identical results.
+ */
+export function powTs(a: string, exp: number, precision: number): string {
+	if (!Number.isInteger(exp)) {
+		throw new Error(`Invalid exponent: ${exp}`);
+	}
+	if (exp === 0) return "1";
+	if (exp < 0) {
+		return divTs("1", powTs(a, -exp, precision), precision);
+	}
+
+	const base = parseDecimal(a);
+	let resultInt = 1n;
+	let resultScale = 0;
+	let currentInt = base.int;
+	let currentScale = base.scale;
+	let e = exp;
+
+	while (e > 0) {
+		if (e & 1) {
+			resultInt *= currentInt;
+			resultScale += currentScale;
+		}
+		e >>= 1;
+		if (e > 0) {
+			currentInt *= currentInt;
+			currentScale *= 2;
+		}
+	}
+	return formatDecimal(resultInt, resultScale);
+}
+
+/**
+ * Pure-TS integer square root via Newton's iteration on BigInt, scaled to
+ * produce `precision` fractional digits. Truncates toward zero; rounding
+ * modes are applied by the caller.
+ */
+export function sqrtTs(a: string, precision: number): string {
+	const parsed = parseDecimal(a);
+	if (parsed.int < 0n) {
+		throw new Error("Cannot compute sqrt of a negative decimal");
+	}
+	if (parsed.int === 0n) return "0";
+
+	const factorExp = 2 * precision - parsed.scale;
+	let radicand = parsed.int;
+	if (factorExp >= 0) {
+		radicand *= pow10BigInt(factorExp);
+	} else {
+		radicand /= pow10BigInt(-factorExp);
+	}
+	const root = bigintSqrt(radicand);
+	return formatDecimal(root, precision);
+}
+
+function bigintSqrt(value: bigint): bigint {
+	if (value < 0n) throw new Error("Cannot compute sqrt of negative bigint");
+	if (value < 2n) return value;
+	let x0 = value;
+	let x1 = (x0 + value / x0) / 2n;
+	while (x1 < x0) {
+		x0 = x1;
+		x1 = (x0 + value / x0) / 2n;
+	}
+	return x0;
 }
