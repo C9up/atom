@@ -95,9 +95,9 @@ export function cmpTs(a: string, b: string): -1 | 0 | 1 {
 
 /**
  * Align two parsed decimals to the same scale by multiplying the less-precise
- * one by `10^(scaleDelta)`. Exported so `Decimal.ts` can reuse it — previously
- * both files had their own copy under different names (`alignScale` vs
- * `alignScaleParts`), which is a maintenance hazard.
+ * one by `10^(scaleDelta)`. Used by the TS arithmetic helpers below
+ * (add/sub/cmp/mod). NOTE: `Decimal.ts` does NOT import this — it aligns scales
+ * inline via `pow10BigInt`, so this is not a shared-dedup point.
  */
 export function alignScale(
 	a: ParsedDecimal,
