@@ -20,6 +20,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+
+  # Typecheck + lint quality gate — one ubuntu run (no matrix). Mirrors the
+  # aggregate `verify:all` gate at the ream-dev root so a standalone clone of
+  # this package enforces the same bar.
+  quality:
+    name: Typecheck & lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with: { version: 9 }
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
   # 5-platform NAPI matrix. atom is fully self-contained: its runtime and
   # test suite have zero @c9up dependencies, so it builds and tests standalone
   # with no workspace stub. darwin-x64 is cross-compiled on an arm64 runner
@@ -224,6 +241,17 @@ jobs:
         with:
           pattern: atom-napi-*
           merge-multiple: true
+
+      # Browser engine: build the WASM into the tarball. `pnpm publish` triggers
+      # prepublishOnly (`tsc && pnpm build:wasm && verify-wasm`), so the wasm
+      # toolchain must be present here — otherwise the package would ship only
+      # the .d.ts stub and break in browsers with ATOM_ENGINE_NOT_FOUND.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
       - run: pnpm publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -27,15 +27,13 @@
     "build:wasm": "wasm-pack build --target web crates/atom-engine-wasm --out-dir ../../wasm",
     "lint": "biome check src/",
     "test:coverage": "vitest run --coverage",
-    "prepublishOnly": "tsc -p tsconfig.build.json"
+    "prepublishOnly": "tsc -p tsconfig.build.json && pnpm build:wasm && node scripts/verify-wasm.mjs"
   },
   "files": [
     "LICENSE",
     "README.md",
     "dist",
     "index.*.node",
-    "index.d.ts",
-    "index.js",
     "scripts",
     "src",
     "wasm"

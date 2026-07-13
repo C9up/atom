@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "atom-engine"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -21,7 +21,7 @@ dependencies = [
 
 [[package]]
 name = "atom-engine-napi"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "atom-engine",
  "napi",
@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "atom-engine-wasm"
-version = "0.1.0"
+version = "0.1.4"
 dependencies = [
  "atom-engine",
  "wasm-bindgen",
