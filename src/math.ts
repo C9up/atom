@@ -27,6 +27,9 @@ export function parseDecimal(input: string): ParsedDecimal {
 	if (!/^\d*$/.test(whole) || !/^\d*$/.test(frac)) {
 		throw new Error(`Invalid decimal: ${input}`);
 	}
+	if (whole.length + frac.length === 0) {
+		throw new Error(`Invalid decimal: ${input}`);
+	}
 
 	const digits = `${whole}${frac}` || "0";
 	const int = BigInt(digits) * sign;
@@ -154,11 +157,11 @@ export function powTs(a: string, exp: number, precision: number): string {
 	let e = exp;
 
 	while (e > 0) {
-		if (e & 1) {
+		if (e % 2 === 1) {
 			resultInt *= currentInt;
 			resultScale += currentScale;
 		}
-		e >>= 1;
+		e = Math.floor(e / 2);
 		if (e > 0) {
 			currentInt *= currentInt;
 			currentScale *= 2;

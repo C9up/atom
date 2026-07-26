@@ -121,6 +121,9 @@ describe("Atom", () => {
 	it("supports pow operation", () => {
 		expect(new Decimal("1.5").pow(3).toString()).toBe("3.375");
 		expect(new Decimal("2").pow(-2).toString()).toBe("0.25");
+		expect(() => new Decimal("2").pow(-2147483648)).toThrow(
+			/Invalid exponent/,
+		);
 	});
 
 	it("supports sqrt operation", () => {
@@ -128,6 +131,15 @@ describe("Atom", () => {
 		expect(
 			new Decimal("2").sqrt({ precision: 3, mode: "half-up" }).toString(),
 		).toBe("1.414");
+		expect(new Decimal("4").sqrt({ precision: 3, mode: "half-up" }).toString()).toBe(
+			"2",
+		);
+		expect(
+			new Decimal("6.25").sqrt({ precision: 2, mode: "half-even" }).toString(),
+		).toBe("2.5");
+		expect(
+			new Decimal("6.3").sqrt({ precision: 0, mode: "half-even" }).toString(),
+		).toBe("3");
 		expect(() => new Decimal("-1").sqrt()).toThrow("Cannot compute sqrt");
 	});
 
@@ -205,6 +217,9 @@ describe("Atom", () => {
 	it("supports quantize", () => {
 		expect(new Decimal("10.27").quantize("0.05").toString()).toBe("10.25");
 		expect(new Decimal("10.28").quantize("0.05").toString()).toBe("10.3");
+		expect(new Decimal("1.06").quantize("0.1", { precision: 0 }).toString()).toBe(
+			"1.1",
+		);
 	});
 
 	it("supports allocate", () => {
@@ -217,6 +232,11 @@ describe("Atom", () => {
 			.allocate([1, 1, 1])
 			.map((item) => item.toString());
 		expect(negative).toEqual(["-4", "-3", "-3"]);
+
+		const cents = new Decimal("10.00")
+			.allocate([1, 1, 1])
+			.map((item) => item.toString());
+		expect(cents).toEqual(["3.34", "3.33", "3.33"]);
 	});
 
 	it("supports locale parse/format helpers", () => {
@@ -224,36 +244,52 @@ describe("Atom", () => {
 		expect(parsed.toString()).toBe("1234.56");
 		expect(parsed.toLocale("en-US")).toBe("1,234.56");
 		expect(Atom.parseLocale("1 234,56", "fr-FR").toString()).toBe("1234.56");
+		expect(Decimal.parseLocale("١٬٢٣٤٫٥٦", "ar-EG").toString()).toBe("1234.56");
+		expect(() => Decimal.parseLocale("1,,2", "en-US")).toThrow(
+			/Invalid localized decimal/,
+		);
+		expect(() => Decimal.parseLocale("12,34,567", "en-US")).toThrow(
+			/Invalid localized decimal/,
+		);
 	});
 
 	it("supports toParts for scaled representation", () => {
 		expect(new Decimal("12.34").toParts()).toEqual({ value: 1234n, scale: 2 });
-		expect(new Decimal("-0.500").toParts()).toEqual({ value: -5n, scale: 1 });
+		expect(new Decimal("-0.500").toParts()).toEqual({ value: -500n, scale: 3 });
+		expect(Decimal.fromMinorUnits(1000n, 2).toParts()).toEqual({
+			value: 1000n,
+			scale: 2,
+		});
 	});
 });
 
-// === Audit fixes — no fallback (Rust required), toLocale precision, mode/round guards ===
+// === Audit fixes — fallback, toLocale precision, mode/round guards ===
 
-import { __overrideNativeForTesting } from "../../src/native.js";
+import { __overrideNativeForTesting, nativeAtom } from "../../src/native.js";
 
-describe("atom > no JS fallback — native binary is required", () => {
-	it("all ops throw ATOM_ENGINE_NOT_FOUND when native is disabled", () => {
+describe("atom > JS fallback when native is unavailable", () => {
+	it("all native-backed ops keep working when native is disabled", () => {
 		__overrideNativeForTesting(null);
 		try {
 			const a = new Decimal("1.23");
 			const b = new Decimal("4.56");
-			expect(() => a.plus(b)).toThrow(/ATOM_(ENGINE_NOT_FOUND|NAPI_DISABLED)/);
-			expect(() => a.minus(b)).toThrow(/ATOM_(ENGINE_NOT_FOUND|NAPI_DISABLED)/);
-			expect(() => a.times(b)).toThrow(/ATOM_(ENGINE_NOT_FOUND|NAPI_DISABLED)/);
-			expect(() => a.div(b, { precision: 18 })).toThrow(
-				/ATOM_(ENGINE_NOT_FOUND|NAPI_DISABLED)/,
-			);
-			expect(() => a.cmp(b)).toThrow(/ATOM_(ENGINE_NOT_FOUND|NAPI_DISABLED)/);
-			expect(() => a.mod(b)).toThrow(/ATOM_(ENGINE_NOT_FOUND|NAPI_DISABLED)/);
-			expect(() => a.pow(3)).toThrow(/ATOM_(ENGINE_NOT_FOUND|NAPI_DISABLED)/);
-			expect(() => new Decimal("4").sqrt()).toThrow(
-				/ATOM_(ENGINE_NOT_FOUND|NAPI_DISABLED)/,
-			);
+			expect(a.plus(b).toString()).toBe("5.79");
+			expect(a.minus(b).toString()).toBe("-3.33");
+			expect(a.times(b).toString()).toBe("5.6088");
+			expect(a.div(b, { precision: 4 }).toString()).toBe("0.2697");
+			expect(a.cmp(b)).toBe(-1);
+			expect(new Decimal("10.5").mod("3").toString()).toBe("1.5");
+			expect(new Decimal("2").pow(3).toString()).toBe("8");
+			expect(new Decimal("4").sqrt().toString()).toBe("2");
+		} finally {
+			__overrideNativeForTesting(undefined);
+		}
+	});
+
+	it("keeps nativeAtom fail-loud for direct internal callers", () => {
+		__overrideNativeForTesting(null);
+		try {
+			expect(() => nativeAtom()).toThrow(/ATOM_NAPI_DISABLED/);
 		} finally {
 			__overrideNativeForTesting(undefined);
 		}
@@ -291,5 +327,114 @@ describe("atom > round mode guard (audit fix)", () => {
 describe("atom > mode aggregate semantics (documented gap)", () => {
 	it("returns [] when no value repeats — documented in JSDoc", () => {
 		expect(Atom.mode("1", "2", "3")).toEqual([]);
+		expect(Atom.mode([])).toEqual([]);
+	});
+});
+
+describe("atom > unsafe decimal inputs", () => {
+	it("rejects unsafe JS integer inputs", () => {
+		expect(() => new Decimal(9007199254740993)).toThrow(/Unsafe integer/);
+	});
+
+	it("accepts finite number inputs written by JS in scientific notation", () => {
+		expect(new Decimal(1e-7).toString()).toBe("0.0000001");
+		expect(new Decimal(1.23e5).toString()).toBe("123000");
+		expect(new Decimal(-1.2e-7).toString()).toBe("-0.00000012");
+	});
+
+	it("rejects digit-free decimal strings", () => {
+		expect(() => new Decimal(".")).toThrow(/Invalid decimal/);
+		expect(() => new Decimal("+")).toThrow(/Invalid decimal/);
+		expect(() => new Decimal("-")).toThrow(/Invalid decimal/);
+	});
+
+	it("rejects unsafe integer inputs in minor-unit and allocation helpers", () => {
+		expect(() => Decimal.fromMinorUnits(9007199254740993, 2)).toThrow(
+			/Unsafe integer/,
+		);
+		expect(() => new Decimal("10").allocate([9007199254740993])).toThrow(
+			/Unsafe integer/,
+		);
+	});
+
+	it("bounds scales and exponents before crossing NAPI", () => {
+		expect(() => new Decimal("1").div("3", { precision: 10_001 })).toThrow(
+			/Invalid scale/,
+		);
+		expect(() => new Decimal("2").pow(100_001)).toThrow(/Invalid exponent/);
+		expect(() => new Decimal("2").pow(1.5)).toThrow(/Invalid exponent/);
+	});
+});
+
+describe("atom > exact rounding regressions", () => {
+	it("rounds sqrt exactly across all non-trunc modes", () => {
+		expect(new Decimal("2").sqrt({ precision: 0, mode: "floor" }).toString()).toBe(
+			"1",
+		);
+		expect(new Decimal("2").sqrt({ precision: 0, mode: "ceil" }).toString()).toBe(
+			"2",
+		);
+		expect(new Decimal("4").sqrt({ precision: 0, mode: "ceil" }).toString()).toBe(
+			"2",
+		);
+		expect(
+			new Decimal("6.25").sqrt({ precision: 0, mode: "half-up" }).toString(),
+		).toBe("3");
+		expect(
+			new Decimal("6.25").sqrt({ precision: 0, mode: "half-even" }).toString(),
+		).toBe("2");
+	});
+
+	it("quantize uses exact rational rounding modes", () => {
+		expect(new Decimal("1.06").quantize("0.1", { mode: "floor" }).toString()).toBe(
+			"1",
+		);
+		expect(new Decimal("1.01").quantize("0.1", { mode: "ceil" }).toString()).toBe(
+			"1.1",
+		);
+		expect(
+			new Decimal("1.25").quantize("0.5", { mode: "half-even" }).toString(),
+		).toBe("1");
+		expect(
+			new Decimal("-1.25").quantize("0.5", { mode: "half-up" }).toString(),
+		).toBe("-1.5");
+	});
+});
+
+describe("atom > locale validation regressions", () => {
+	it("accepts valid localized grouping and parenthesized negatives", () => {
+		expect(Decimal.parseLocale("12,34,567.89", "en-IN").toString()).toBe(
+			"1234567.89",
+		);
+		expect(Decimal.parseLocale("(123)", "en-US").toString()).toBe("-123");
+	});
+
+	it("rejects malformed localized fractions and Rosetta grouping", () => {
+		expect(() => Decimal.parseLocale("1,234.5.6", "en-US")).toThrow(
+			/Invalid localized decimal/,
+		);
+		const stub = {
+			getNumberFormatData: () => ({
+				decimal: ";",
+				group: "_",
+				minus: "-",
+				plusSign: "+",
+			}),
+			formatNumberString: (value: string) => value,
+		};
+		expect(() => Decimal.parseLocale("1__234;56", stub)).toThrow(
+			/Invalid localized decimal/,
+		);
+	});
+});
+
+describe("atom > aggregate error paths", () => {
+	it("keeps empty aggregate guards except mode/sum", () => {
+		expect(() => Atom.avg([])).toThrow(/at least one/);
+		expect(() => Atom.min([])).toThrow(/at least one/);
+		expect(() => Atom.max([])).toThrow(/at least one/);
+		expect(() => Atom.median([])).toThrow(/at least one/);
+		expect(() => Atom.stddev([], { sample: true })).toThrow(/at least one/);
+		expect(() => Atom.stddev(["1"], { sample: true })).toThrow(/at least two/);
 	});
 });

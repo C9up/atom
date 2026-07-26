@@ -7,7 +7,7 @@
  * @implements Story 35.10
  */
 import { describe, expect, it } from "vitest";
-import { decimalAtlasAdapter } from "../../src/atlas.js";
+import { decimalAtlasAdapter, decimalColumn } from "../../src/atlas.js";
 import { Decimal } from "../../src/Decimal.js";
 
 describe("decimalAtlasAdapter", () => {
@@ -36,6 +36,12 @@ describe("decimalAtlasAdapter", () => {
 			const d = decimalAtlasAdapter.consume(123);
 			expect(d).toBeInstanceOf(Decimal);
 			expect(d?.toString()).toBe("123");
+		});
+
+		it("rejects unsafe integer numeric inputs", () => {
+			expect(() => decimalAtlasAdapter.consume(9007199254740993)).toThrow(
+				/Unsafe integer/,
+			);
 		});
 
 		it("accepts bigint inputs", () => {
@@ -100,5 +106,31 @@ describe("decimalAtlasAdapter", () => {
 				"prepare",
 			]);
 		});
+	});
+});
+
+describe("decimalColumn", () => {
+	it("adds Atlas-friendly metadata without changing the base adapter shape", () => {
+		const column = decimalColumn({ scale: 2, nullable: false });
+		expect(column.meta).toEqual({
+			atomDecimal: true,
+			columnType: "decimal",
+			scale: 2,
+			nullable: false,
+		});
+		expect(column.consume("12.30")?.toString()).toBe("12.3");
+		expect(column.prepare(new Decimal("12.30"))).toBe("12.3");
+	});
+
+	it("enforces nullable and scale options", () => {
+		const required = decimalColumn({ nullable: false });
+		expect(() => required.consume(null)).toThrow(/non-nullable/);
+		expect(() => required.prepare(null)).toThrow(/non-nullable/);
+
+		const rounded = decimalColumn({ scale: 2, exact: false, mode: "half-up" });
+		expect(rounded.consume("1.235")?.toString()).toBe("1.24");
+
+		const exact = decimalColumn({ scale: 2 });
+		expect(() => exact.consume("1.235")).toThrow(/without precision loss/);
 	});
 });

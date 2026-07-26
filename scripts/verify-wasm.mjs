@@ -1,6 +1,6 @@
 import { existsSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 // Publish-time gate: the `wasm-pack build --target web` output (JS glue + the
 // binary) MUST be in the package. Without it the browser loader
@@ -24,4 +24,26 @@ for (const name of required) {
   }
 }
 
-console.log('[atom:wasm] browser artifacts present')
+const wasm = await import(pathToFileURL(join(wasmDir, 'atom_engine_wasm.js')).href)
+await wasm.default()
+
+for (const fn of ['add', 'sub', 'mul', 'div', 'rem', 'pow', 'sqrt', 'cmp']) {
+  if (typeof wasm[fn] !== 'function') {
+    throw new Error(`[atom:wasm] invalid exports: missing ${fn}()`)
+  }
+}
+
+if (wasm.add('1.2', '3.4') !== '4.6') {
+  throw new Error('[atom:wasm] add smoke test failed')
+}
+if (wasm.pow('2', -2, 18) !== '0.25') {
+  throw new Error('[atom:wasm] pow smoke test failed')
+}
+if (wasm.sqrt('2', 6) !== '1.414213') {
+  throw new Error('[atom:wasm] sqrt smoke test failed')
+}
+if (wasm.cmp('1.20', '1.2') !== 0) {
+  throw new Error('[atom:wasm] cmp smoke test failed')
+}
+
+console.log('[atom:wasm] browser artifacts present and functional')

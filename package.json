@@ -1,6 +1,6 @@
 {
   "name": "@c9up/atom",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Atom — exact decimal arithmetic for the Ream ecosystem (TypeScript + Rust N-API)",
   "license": "MIT",
   "type": "module",
@@ -24,6 +24,7 @@
     "test": "vitest run",
     "test:rust": "cargo test -p atom-engine",
     "test:napi": "node scripts/verify-napi.mjs",
+    "bench": "pnpm build && node scripts/bench.mjs",
     "build:wasm": "wasm-pack build --target web crates/atom-engine-wasm --out-dir ../../wasm",
     "lint": "biome check src/",
     "test:coverage": "vitest run --coverage",

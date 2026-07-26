@@ -32,7 +32,7 @@ pub fn div(a: &str, b: &str, precision: u32) -> Result<String, String> {
     let da = parse_decimal(a)?;
     let db = parse_decimal(b)?;
     if db.int.is_zero() {
-      return Err("Division by zero".to_string());
+        return Err("Division by zero".to_string());
     }
 
     let ten_pow_precision = pow10(precision);
@@ -75,7 +75,10 @@ pub fn pow(a: &str, exp: i32, precision: u32) -> Result<String, String> {
         return Ok("1".to_string());
     }
     if exp < 0 {
-        let positive = pow(a, -exp, precision)?;
+        let positive_exp = exp
+            .checked_neg()
+            .ok_or_else(|| "Invalid exponent: below supported i32 range".to_string())?;
+        let positive = pow(a, positive_exp, precision)?;
         return div("1", &positive, precision);
     }
 
@@ -152,9 +155,9 @@ pub fn cmp(a: &str, b: &str) -> Result<i32, String> {
     let (ai, bi, _) = align_scale(&da, &db);
     let ord = ai.cmp(&bi);
     Ok(match ord {
-      Ordering::Less => -1,
-      Ordering::Equal => 0,
-      Ordering::Greater => 1,
+        Ordering::Less => -1,
+        Ordering::Equal => 0,
+        Ordering::Greater => 1,
     })
 }
 
@@ -187,28 +190,29 @@ fn parse_decimal(input: &str) -> Result<Decimal, String> {
     }
 
     let digits = format!("{}{}", whole, frac);
-    let mut int = if digits.is_empty() {
-      BigInt::zero()
-    } else {
-      digits.parse::<BigInt>().map_err(|_| format!("Invalid decimal: {}", input))?
-    };
+    if digits.is_empty() {
+        return Err(format!("Invalid decimal: {}", input));
+    }
+    let mut int = digits
+        .parse::<BigInt>()
+        .map_err(|_| format!("Invalid decimal: {}", input))?;
     if sign < 0 {
         int = -int;
     }
 
     Ok(Decimal {
-      int,
-      scale: frac.len() as u32,
+        int,
+        scale: frac.len() as u32,
     })
 }
 
 fn align_scale(a: &Decimal, b: &Decimal) -> (BigInt, BigInt, u32) {
     if a.scale == b.scale {
-      return (a.int.clone(), b.int.clone(), a.scale);
+        return (a.int.clone(), b.int.clone(), a.scale);
     }
     if a.scale > b.scale {
-      let factor = pow10(a.scale - b.scale);
-      return (a.int.clone(), &b.int * factor, a.scale);
+        let factor = pow10(a.scale - b.scale);
+        return (a.int.clone(), &b.int * factor, a.scale);
     }
 
     let factor = pow10(b.scale - a.scale);
@@ -217,7 +221,7 @@ fn align_scale(a: &Decimal, b: &Decimal) -> (BigInt, BigInt, u32) {
 
 fn format_decimal(int: BigInt, scale: u32) -> String {
     if scale == 0 {
-      return int.to_string();
+        return int.to_string();
     }
 
     let negative = int.is_negative();
@@ -225,25 +229,25 @@ fn format_decimal(int: BigInt, scale: u32) -> String {
     let scale_usize = scale as usize;
 
     if s.len() <= scale_usize {
-      let zeros = "0".repeat(scale_usize + 1 - s.len());
-      s = format!("{}{}", zeros, s);
+        let zeros = "0".repeat(scale_usize + 1 - s.len());
+        s = format!("{}{}", zeros, s);
     }
 
     let split = s.len() - scale_usize;
     let whole = &s[..split];
     let mut frac = s[split..].to_string();
     while frac.ends_with('0') {
-      frac.pop();
+        frac.pop();
     }
 
     let mut out = if frac.is_empty() {
-      whole.to_string()
+        whole.to_string()
     } else {
-      format!("{}.{}", whole, frac)
+        format!("{}.{}", whole, frac)
     };
 
     if negative && out != "0" {
-      out = format!("-{}", out);
+        out = format!("-{}", out);
     }
     out
 }
@@ -251,7 +255,7 @@ fn format_decimal(int: BigInt, scale: u32) -> String {
 fn pow10(exp: u32) -> BigInt {
     let mut acc = BigInt::from(1u32);
     for _ in 0..exp {
-      acc *= 10u32;
+        acc *= 10u32;
     }
     acc
 }
@@ -262,94 +266,94 @@ mod tests {
 
     #[test]
     fn add_and_sub_work() {
-      assert_eq!(add("1.23", "2.7").unwrap(), "3.93");
-      assert_eq!(sub("10", "2.5").unwrap(), "7.5");
+        assert_eq!(add("1.23", "2.7").unwrap(), "3.93");
+        assert_eq!(sub("10", "2.5").unwrap(), "7.5");
     }
 
     #[test]
     fn mul_works() {
-      assert_eq!(mul("1.2", "3").unwrap(), "3.6");
-      assert_eq!(mul("2.50", "2").unwrap(), "5");
+        assert_eq!(mul("1.2", "3").unwrap(), "3.6");
+        assert_eq!(mul("2.50", "2").unwrap(), "5");
     }
 
     #[test]
     fn div_works() {
-      assert_eq!(div("1", "8", 6).unwrap(), "0.125");
-      assert_eq!(div("10", "4", 4).unwrap(), "2.5");
+        assert_eq!(div("1", "8", 6).unwrap(), "0.125");
+        assert_eq!(div("10", "4", 4).unwrap(), "2.5");
     }
 
     #[test]
     fn cmp_works() {
-      assert_eq!(cmp("1.20", "1.2").unwrap(), 0);
-      assert_eq!(cmp("1.19", "1.2").unwrap(), -1);
-      assert_eq!(cmp("1.21", "1.2").unwrap(), 1);
+        assert_eq!(cmp("1.20", "1.2").unwrap(), 0);
+        assert_eq!(cmp("1.19", "1.2").unwrap(), -1);
+        assert_eq!(cmp("1.21", "1.2").unwrap(), 1);
     }
 
     #[test]
     fn div_by_zero_errors() {
-      assert!(div("5", "0", 10).is_err());
-      assert!(rem("5", "0").is_err());
+        assert!(div("5", "0", 10).is_err());
+        assert!(rem("5", "0").is_err());
     }
 
     #[test]
     fn negative_numbers() {
-      assert_eq!(add("-1.5", "0.5").unwrap(), "-1");
-      assert_eq!(sub("-1", "-2").unwrap(), "1");
-      assert_eq!(mul("-2", "3").unwrap(), "-6");
-      assert_eq!(mul("-2", "-3").unwrap(), "6");
-      assert_eq!(cmp("-1", "-2").unwrap(), 1);
-      assert_eq!(cmp("-2", "-1").unwrap(), -1);
+        assert_eq!(add("-1.5", "0.5").unwrap(), "-1");
+        assert_eq!(sub("-1", "-2").unwrap(), "1");
+        assert_eq!(mul("-2", "3").unwrap(), "-6");
+        assert_eq!(mul("-2", "-3").unwrap(), "6");
+        assert_eq!(cmp("-1", "-2").unwrap(), 1);
+        assert_eq!(cmp("-2", "-1").unwrap(), -1);
     }
 
     #[test]
     fn mismatched_scales_large() {
-      // 15-digit vs 2-digit scale
-      let result = add("1.000000000000001", "0.99").unwrap();
-      assert_eq!(result, "1.990000000000001");
+        // 15-digit vs 2-digit scale
+        let result = add("1.000000000000001", "0.99").unwrap();
+        assert_eq!(result, "1.990000000000001");
     }
 
     #[test]
     fn very_large_values() {
-      // Beyond 2^53 — where JS number would lose precision
-      let huge = "123456789012345678901234567890";
-      assert_eq!(add(huge, "1").unwrap(), "123456789012345678901234567891");
-      assert_eq!(mul(huge, "2").unwrap(), "246913578024691357802469135780");
+        // Beyond 2^53 — where JS number would lose precision
+        let huge = "123456789012345678901234567890";
+        assert_eq!(add(huge, "1").unwrap(), "123456789012345678901234567891");
+        assert_eq!(mul(huge, "2").unwrap(), "246913578024691357802469135780");
     }
 
     #[test]
     fn rem_works() {
-      assert_eq!(rem("10", "3").unwrap(), "1");
-      assert_eq!(rem("10.5", "3").unwrap(), "1.5");
-      assert_eq!(rem("-10", "3").unwrap(), "-1");
+        assert_eq!(rem("10", "3").unwrap(), "1");
+        assert_eq!(rem("10.5", "3").unwrap(), "1.5");
+        assert_eq!(rem("-10", "3").unwrap(), "-1");
     }
 
     #[test]
     fn pow_works() {
-      assert_eq!(pow("2", 10, 18).unwrap(), "1024");
-      assert_eq!(pow("1.5", 2, 18).unwrap(), "2.25");
-      assert_eq!(pow("2", 0, 18).unwrap(), "1");
-      // Negative exponent goes through div path
-      assert_eq!(pow("2", -2, 18).unwrap(), "0.25");
+        assert_eq!(pow("2", 10, 18).unwrap(), "1024");
+        assert_eq!(pow("1.5", 2, 18).unwrap(), "2.25");
+        assert_eq!(pow("2", 0, 18).unwrap(), "1");
+        // Negative exponent goes through div path
+        assert_eq!(pow("2", -2, 18).unwrap(), "0.25");
     }
 
     #[test]
     fn sqrt_works() {
-      assert_eq!(sqrt("4", 6).unwrap(), "2");
-      assert_eq!(sqrt("2", 6).unwrap(), "1.414213");
-      assert_eq!(sqrt("0", 6).unwrap(), "0");
-      assert!(sqrt("-1", 6).is_err());
+        assert_eq!(sqrt("4", 6).unwrap(), "2");
+        assert_eq!(sqrt("2", 6).unwrap(), "1.414213");
+        assert_eq!(sqrt("0", 6).unwrap(), "0");
+        assert!(sqrt("-1", 6).is_err());
     }
 
     #[test]
     fn empty_input_errors() {
-      assert!(add("", "1").is_err());
-      assert!(add("1", "").is_err());
+        assert!(add("", "1").is_err());
+        assert!(add("1", "").is_err());
     }
 
     #[test]
     fn malformed_input_errors() {
-      assert!(add("1.2.3", "1").is_err());
-      assert!(add("abc", "1").is_err());
-      assert!(add("1a", "1").is_err());
+        assert!(add("1.2.3", "1").is_err());
+        assert!(add("abc", "1").is_err());
+        assert!(add("1a", "1").is_err());
     }
 }

@@ -23,7 +23,29 @@
  * @implements Story 35.10
  */
 
-import { Decimal } from "./Decimal.js";
+import { Decimal, type RoundMode } from "./Decimal.js";
+
+export interface DecimalColumnOptions {
+	scale?: number;
+	exact?: boolean;
+	mode?: RoundMode;
+	nullable?: boolean;
+	columnType?: "decimal" | "numeric";
+}
+
+export interface DecimalAtlasAdapter {
+	consume(raw: unknown): Decimal | null;
+	prepare(value: unknown): string | null;
+}
+
+export interface DecimalAtlasColumn extends DecimalAtlasAdapter {
+	meta: {
+		atomDecimal: true;
+		columnType: "decimal" | "numeric";
+		scale?: number;
+		nullable: boolean;
+	};
+}
 
 /**
  * Atlas adapter for postgres `numeric` / `decimal` (and equivalent on mysql /
@@ -55,7 +77,7 @@ import { Decimal } from "./Decimal.js";
  * plugin cannot monkey-patch `prepare` / `consume` at runtime and silently
  * corrupt every repository sharing this import.
  */
-export const decimalAtlasAdapter = Object.freeze({
+export const decimalAtlasAdapter: DecimalAtlasAdapter = Object.freeze({
 	consume(raw: unknown): Decimal | null {
 		if (raw === null || raw === undefined) return null;
 		if (raw instanceof Decimal) return raw;
@@ -81,3 +103,57 @@ export const decimalAtlasAdapter = Object.freeze({
 		return value.toString();
 	},
 });
+
+export function decimalColumn(
+	options: DecimalColumnOptions = {},
+): DecimalAtlasColumn {
+	const columnType = options.columnType ?? "decimal";
+	const nullable = options.nullable ?? true;
+	const adapter: DecimalAtlasColumn = {
+		meta: {
+			atomDecimal: true,
+			columnType,
+			scale: options.scale,
+			nullable,
+		},
+		consume(raw: unknown): Decimal | null {
+			const value = decimalAtlasAdapter.consume(raw);
+			if (value === null) {
+				if (!nullable) {
+					throw new TypeError(
+						"decimalColumn.consume: non-nullable column got null",
+					);
+				}
+				return null;
+			}
+			return normalizeColumnDecimal(value, options);
+		},
+		prepare(value: unknown): string | null {
+			const prepared = decimalAtlasAdapter.prepare(value);
+			if (prepared === null) {
+				if (!nullable) {
+					throw new TypeError(
+						"decimalColumn.prepare: non-nullable column got null",
+					);
+				}
+				return null;
+			}
+			return normalizeColumnDecimal(new Decimal(prepared), options).toString();
+		},
+	};
+	return Object.freeze(adapter);
+}
+
+function normalizeColumnDecimal(
+	value: Decimal,
+	options: DecimalColumnOptions,
+): Decimal {
+	if (options.scale === undefined) return value;
+	if (options.exact ?? true) {
+		return Decimal.fromMinorUnits(
+			value.toMinorUnits(options.scale),
+			options.scale,
+		);
+	}
+	return value.toScale(options.scale, options.mode ?? "half-up");
+}

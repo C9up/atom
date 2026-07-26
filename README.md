@@ -1,29 +1,79 @@
 # @c9up/atom
 
-> Exact decimal arithmetic + statistics for the Ream ecosystem (TypeScript + Rust N-API). No floating-point drift.
+Exact decimal arithmetic, statistics, and currency-safe money values for the
+Ream ecosystem. Rust NAPI/WASM is used when available; the TypeScript BigInt
+engine is the fallback.
 
-Part of **[Ream](https://github.com/C9up/ream)** — a Rust-powered, AdonisJS-compatible Node.js framework. Independent, publishable package.
-
-## Installation
+## Install
 
 ```bash
 pnpm add @c9up/atom
 ```
 
-## Usage
+## Decimal
 
 ```ts
-import { decimal, sum, avg, median, stddev } from '@c9up/atom'
+import { Decimal, decimal, sum } from '@c9up/atom'
 
-const price = decimal('19.99')          // exact decimal, no float drift
-sum(['1.1', '2.2', '3.3'])              // exact aggregate
-avg(values); median(values); stddev(values)
+decimal('0.1').plus('0.2').toString() // "0.3"
+sum(['1.1', '2.2', '3.3']).toString() // "6.6"
+
+Decimal.safeParse('12.34') // { success: true, value: Decimal }
+Decimal.tryParse('bad') // null
+```
+
+Prefer string or bigint inputs for exact user/business data. Unsafe JS integer
+numbers are rejected.
+
+## Money
+
+```ts
+import { money, Money } from '@c9up/atom'
+
+const total = money('10.00', 'USD').allocate([1, 1, 1])
+total.map((part) => part.toString()) // ["3.34 USD", "3.33 USD", "3.33 USD"]
+
+Money.fromMinorUnits(1999n, 'EUR').format({ locale: 'fr-FR' })
+```
+
+`Money` keeps currency and scale together, and rejects operations across
+different currencies.
+
+## Context
+
+```ts
+import { configureAtomContext, decimal, withAtomContext } from '@c9up/atom'
+
+configureAtomContext({ precision: 8, roundMode: 'trunc' })
+withAtomContext({ precision: 2 }, () => decimal('1').div('8').toString())
+```
+
+## Atlas
+
+```ts
+import { Column } from '@c9up/atlas'
+import { decimalColumn } from '@c9up/atom/atlas'
+
+class Invoice {
+  @Column(decimalColumn({ scale: 2, nullable: false }))
+  total!: Decimal
+}
+```
+
+## Scripts
+
+```bash
+pnpm test
+pnpm test:napi
+pnpm test:coverage
+pnpm bench
+pnpm build:wasm && node scripts/verify-wasm.mjs
 ```
 
 ## Entry points
 
 - `@c9up/atom` — main API
-- `@c9up/atom/atlas` — Atlas integration adapter
+- `@c9up/atom/atlas` — Atlas column helpers
 
 ## License
 

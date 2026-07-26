@@ -1,11 +1,20 @@
 /**
  * @c9up/atom — exact decimal arithmetic.
- * The Rust engine is required (NAPI in Node, WASM in browser) — there is no JS/TS fallback.
+ * The Rust engine is preferred (NAPI in Node, WASM in browser), with a
+ * pure TypeScript BigInt fallback for unsupported platforms.
  */
 
+export type { AtomContext, AtomContextOptions } from "./context.js";
+export {
+	configureAtomContext,
+	getAtomContext,
+	resetAtomContext,
+	withAtomContext,
+} from "./context.js";
 export type {
 	BetweenOptions,
 	DecimalInput,
+	DecimalSafeParseResult,
 	DecimalScaled,
 	DivOptions,
 	MedianOptions,
@@ -17,10 +26,14 @@ export type {
 	ToMinorUnitsOptions,
 } from "./Decimal.js";
 export { Decimal } from "./Decimal.js";
+export type { MoneyFormatOptions, MoneyOptions } from "./Money.js";
+export { Money, money } from "./Money.js";
 export { isNativeAvailable } from "./native.js";
 
+import { defaultPrecision, defaultRoundMode } from "./context.js";
 import type { MedianOptions, StddevOptions } from "./Decimal.js";
 import { Decimal, type DecimalInput } from "./Decimal.js";
+import { money } from "./Money.js";
 
 export function decimal(value: DecimalInput): Decimal {
 	return Decimal.from(value);
@@ -98,7 +111,7 @@ function medianImpl(
 	list.sort((a, b) => a.cmp(b));
 	const mid = Math.floor(list.length / 2);
 	if (list.length % 2 === 1) return list[mid];
-	const precision = options.precision ?? 18;
+	const precision = options.precision ?? defaultPrecision();
 	return list[mid - 1].plus(list[mid]).div("2", { precision });
 }
 
@@ -109,7 +122,7 @@ function modeImpl(values: Iterable<DecimalInput>): Decimal[] {
 		frequencies.set(key, (frequencies.get(key) ?? 0) + 1);
 	}
 	if (frequencies.size === 0) {
-		throw new Error("Atom.mode requires at least one value");
+		return [];
 	}
 	let maxCount = 0;
 	for (const count of frequencies.values()) {
@@ -131,8 +144,8 @@ function stddevImpl(
 		throw new Error("Atom.stddev requires at least one value");
 	}
 	const sample = options.sample ?? false;
-	const precision = options.precision ?? 18;
-	const mode = options.mode ?? "trunc";
+	const precision = options.precision ?? defaultPrecision();
+	const mode = options.mode ?? defaultRoundMode();
 	const divisor = sample ? list.length - 1 : list.length;
 	if (divisor <= 0) {
 		throw new Error("Atom.stddev sample mode requires at least two values");
@@ -256,6 +269,8 @@ export const Atom = {
 	/** Parse a locale-formatted decimal string (e.g. `'1.234,56'` in `fr-FR`). */
 	parseLocale: (value: string, locales?: Intl.LocalesArgument) =>
 		Decimal.parseLocale(value, locales),
+	/** Construct a currency-bound `Money` value. */
+	money,
 };
 
 export const sum = sumFn;

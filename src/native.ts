@@ -5,8 +5,8 @@
  * - **Browser**: loads the `.wasm` binary via the wasm-pack JS glue (async init on
  *   first module import via top-level await, then sync function calls)
  *
- * The consumer imports `nativeAtom()` and gets the same `NativeAtom` interface
- * regardless of the environment. No conditional imports needed at the call site.
+ * The Decimal facade prefers this engine when available and falls back to the
+ * pure TypeScript BigInt implementation when unavailable.
  */
 
 export interface NativeAtom {
@@ -90,6 +90,13 @@ export function nativeAtom(): NativeAtom {
 				`  Fix (Node): cd packages/atom && pnpm build:napi\n` +
 				`  Fix (Browser): cd packages/atom && pnpm build:wasm`,
 		);
+	}
+	return native;
+}
+
+export function tryNativeAtom(): NativeAtom | undefined {
+	if (overrideNative !== undefined) {
+		return overrideNative ?? undefined;
 	}
 	return native;
 }

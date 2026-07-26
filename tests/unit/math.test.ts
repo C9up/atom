@@ -30,7 +30,7 @@ describe("atom > math > parseDecimal", () => {
 		expect(parseDecimal("  7.5  ")).toEqual({ int: 75n, scale: 1 });
 	});
 
-	it("treats '0' / '' / '.5' / '5.' as valid edge inputs", () => {
+	it("treats '0' / '.5' / '5.' as valid edge inputs", () => {
 		expect(parseDecimal("0")).toEqual({ int: 0n, scale: 0 });
 		expect(parseDecimal(".5")).toEqual({ int: 5n, scale: 1 });
 		expect(parseDecimal("5.")).toEqual({ int: 5n, scale: 0 });
@@ -39,6 +39,9 @@ describe("atom > math > parseDecimal", () => {
 	it("rejects empty / whitespace-only / multi-dot / non-digit inputs", () => {
 		expect(() => parseDecimal("")).toThrow(/empty/);
 		expect(() => parseDecimal("   ")).toThrow(/empty/);
+		expect(() => parseDecimal(".")).toThrow(/Invalid decimal/);
+		expect(() => parseDecimal("+")).toThrow(/Invalid decimal/);
+		expect(() => parseDecimal("-")).toThrow(/Invalid decimal/);
 		expect(() => parseDecimal("1.2.3")).toThrow(/Invalid decimal/);
 		expect(() => parseDecimal("12abc")).toThrow(/Invalid decimal/);
 		expect(() => parseDecimal("1,5")).toThrow(/Invalid decimal/);
@@ -122,6 +125,10 @@ describe("atom > math > powTs", () => {
 
 	it("throws on a non-integer exponent", () => {
 		expect(() => powTs("2", 1.5, 4)).toThrow(/Invalid exponent/);
+	});
+
+	it("handles exponents larger than 32-bit bitwise operators", () => {
+		expect(powTs("1", 2 ** 33, 0)).toBe("1");
 	});
 });
 

@@ -28,7 +28,7 @@ if (!existsSync(binary)) {
 const require2 = createRequire(import.meta.url)
 const binding = require2(binary)
 
-for (const fn of ['add', 'sub', 'mul', 'div', 'cmp']) {
+for (const fn of ['add', 'sub', 'mul', 'div', 'rem', 'pow', 'sqrt', 'cmp']) {
   if (typeof binding[fn] !== 'function') {
     throw new Error(`[atom:napi] invalid exports: missing ${fn}()`)
   }
@@ -42,6 +42,15 @@ if (binding.mul('2.5', '2') !== '5') {
 }
 if (binding.cmp('1.20', '1.2') !== 0) {
   throw new Error('[atom:napi] cmp smoke test failed')
+}
+if (binding.rem('10.5', '3') !== '1.5') {
+  throw new Error('[atom:napi] rem smoke test failed')
+}
+if (binding.pow('2', -2, 18) !== '0.25') {
+  throw new Error('[atom:napi] pow smoke test failed')
+}
+if (binding.sqrt('2', 6) !== '1.414213') {
+  throw new Error('[atom:napi] sqrt smoke test failed')
 }
 
 console.log('[atom:napi] smoke test passed')
