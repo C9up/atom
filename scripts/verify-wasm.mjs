@@ -1,4 +1,4 @@
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -25,7 +25,14 @@ for (const name of required) {
 }
 
 const wasm = await import(pathToFileURL(join(wasmDir, 'atom_engine_wasm.js')).href)
-await wasm.default()
+// Hand the binary over as BYTES. Called with no argument, the wasm-bindgen
+// `--target web` glue defaults to `new URL('..._bg.wasm', import.meta.url)` and
+// fetches it — and Node's fetch refuses a `file:` URL ("not implemented...
+// yet..."), so this gate died on the very artifact it was verifying. Bytes skip
+// the fetch branch entirely and go straight to WebAssembly.instantiate.
+await wasm.default({
+  module_or_path: readFileSync(join(wasmDir, 'atom_engine_wasm_bg.wasm')),
+})
 
 for (const fn of ['add', 'sub', 'mul', 'div', 'rem', 'pow', 'sqrt', 'cmp']) {
   if (typeof wasm[fn] !== 'function') {
