@@ -1,6 +1,6 @@
 {
   "name": "@c9up/atom",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Atom — exact decimal arithmetic for the Ream ecosystem (TypeScript + Rust N-API)",
   "license": "MIT",
   "type": "module",
