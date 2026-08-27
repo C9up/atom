@@ -3,10 +3,60 @@ export interface ParsedDecimal {
 	scale: number;
 }
 
+/**
+ * How far an exponent may move the decimal point.
+ *
+ * An expression like `1E1000000` is syntactically fine and would expand to a
+ * megabyte of zeroes before anything could reject it. The bound is far past any
+ * real monetary or measurement scale, and refuses the pathological input as
+ * input rather than as an out-of-memory later.
+ */
+const MAX_EXPONENT = 10_000;
+
+/**
+ * Expand scientific notation into plain decimal text.
+ *
+ * `1E-10` is what `JSON.stringify` emits for a small number and what many APIs
+ * return, so a value that survives as a `number` has to survive as the string
+ * carrying it too — otherwise the same amount parses or throws depending on
+ * which side of a JSON boundary it arrived from.
+ */
+function expandScientific(input: string): string {
+	const matched = /^([+-]?)(\d*)(?:\.(\d*))?[eE]([+-]?\d+)$/.exec(input);
+	if (!matched) {
+		throw new Error(`Invalid decimal: ${input}`);
+	}
+	const [, sign, wholeRaw = "", fracRaw = "", exponentRaw = "0"] = matched;
+	if (wholeRaw.length === 0 && fracRaw.length === 0) {
+		throw new Error(`Invalid decimal: ${input}`);
+	}
+
+	const exponent = Number(exponentRaw);
+	if (!Number.isInteger(exponent) || Math.abs(exponent) > MAX_EXPONENT) {
+		throw new Error(`Invalid decimal: ${input}`);
+	}
+
+	const digits = `${wholeRaw}${fracRaw}`;
+	const pointIndex = wholeRaw.length + exponent;
+
+	let expanded: string;
+	if (pointIndex <= 0) {
+		expanded = `0.${"0".repeat(-pointIndex)}${digits}`;
+	} else if (pointIndex >= digits.length) {
+		expanded = `${digits}${"0".repeat(pointIndex - digits.length)}`;
+	} else {
+		expanded = `${digits.slice(0, pointIndex)}.${digits.slice(pointIndex)}`;
+	}
+	return sign === "-" ? `-${expanded}` : expanded;
+}
+
 export function parseDecimal(input: string): ParsedDecimal {
-	const s = input.trim();
+	let s = input.trim();
 	if (!s) {
 		throw new Error("Invalid decimal: empty string");
+	}
+	if (/[eE]/.test(s)) {
+		s = expandScientific(s);
 	}
 
 	let sign = 1n;
