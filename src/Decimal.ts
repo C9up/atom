@@ -505,10 +505,29 @@ export class Decimal {
 		};
 	}
 
+	/**
+	 * The canonical decimal — trailing zeros trimmed. `'001.2300'` prints
+	 * `'1.23'`, and `'100.0000000000'` prints `'100'`.
+	 *
+	 * **The scale belongs to your domain, not to the value.** To persist or to
+	 * allocate, pass the scale your column declares — `toFixed(10)`,
+	 * `toScale(10)` — never the one the value happens to be carrying. A scale
+	 * read back off a value is not a promise:
+	 *
+	 *     new Decimal('100.0000000000').toParts().scale        // 10
+	 *     new Decimal('100.0000000000').plus('0').toParts()    // scale 0
+	 *
+	 * Arithmetic does not carry a declared scale, so anything that has been
+	 * through `plus` or `times` has whatever scale its VALUE needs. That
+	 * matters because `allocate()` splits at the scale it finds: the same
+	 * amount divides into `33 + 67` or `33.3333333333 + 66.6666666667`
+	 * depending on a property this method deliberately does not show you.
+	 */
 	toString(): string {
 		return this.#value;
 	}
 
+	/** The canonical form — see {@link toString} on storing a scale. */
 	toJSON(): string {
 		return this.#value;
 	}
