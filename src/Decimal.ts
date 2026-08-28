@@ -199,9 +199,9 @@ export class Decimal {
 		const mode = options.mode ?? defaultRoundMode();
 		assertScale(precision);
 		if (mode === "trunc") {
-			return fromIntScale(this.sqrtTruncInt(precision), precision);
+			return fromIntScale(this.#sqrtTruncInt(precision), precision);
 		}
-		const truncated = this.sqrtTruncInt(precision);
+		const truncated = this.#sqrtTruncInt(precision);
 		const rounded = roundSqrtInt(this.#value, truncated, precision, mode);
 		return fromIntScale(rounded, precision);
 	}
@@ -522,7 +522,7 @@ export class Decimal {
 		return Number(this.#value);
 	}
 
-	private sqrtTruncInt(precision: number): bigint {
+	#sqrtTruncInt(precision: number): bigint {
 		const native = tryNativeAtom();
 		const result = native
 			? native.sqrt(this.#value, precision)

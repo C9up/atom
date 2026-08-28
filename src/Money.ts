@@ -89,14 +89,14 @@ export class Money {
 	}
 
 	plus(other: Money): Money {
-		this.assertSameCurrency(other);
+		this.#assertSameCurrency(other);
 		return new Money(this.#amount.plus(other.#amount), this.#currency, {
 			scale: this.#scale,
 		});
 	}
 
 	minus(other: Money): Money {
-		this.assertSameCurrency(other);
+		this.#assertSameCurrency(other);
 		return new Money(this.#amount.minus(other.#amount), this.#currency, {
 			scale: this.#scale,
 		});
@@ -153,7 +153,7 @@ export class Money {
 		};
 	}
 
-	private assertSameCurrency(other: Money): void {
+	#assertSameCurrency(other: Money): void {
 		if (this.#currency !== other.#currency || this.#scale !== other.#scale) {
 			throw new Error(
 				`Currency mismatch: ${this.#currency}/${this.#scale} !== ${other.#currency}/${other.#scale}`,
