@@ -9,16 +9,17 @@
  * pure TypeScript BigInt implementation when unavailable.
  */
 
-export interface NativeAtom {
-	add(a: string, b: string): string;
-	sub(a: string, b: string): string;
-	mul(a: string, b: string): string;
-	div(a: string, b: string, precision: number): string;
-	rem(a: string, b: string): string;
-	pow(a: string, exp: number, precision: number): string;
-	sqrt(a: string, precision: number): string;
-	cmp(a: string, b: string): number;
-}
+/**
+ * The engine's surface, as the Rust declares it.
+ *
+ * Derived from `./native/generated.js` — written by `pnpm build:napi-types`
+ * from napi-derive's own `type-def` output — rather than restated here, where
+ * nothing would notice a `pub fn` gaining a parameter or changing its return.
+ *
+ * The WASM build is held to the same shape below, so the two engines cannot
+ * quietly diverge either: the browser glue has to export what the Rust does.
+ */
+export type NativeAtom = typeof import("./native/generated.js");
 
 let native: NativeAtom | undefined;
 let loadError: unknown;
