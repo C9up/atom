@@ -7,5 +7,5 @@ repository.workspace = true
 description = "Exact decimal arithmetic engine in Rust for Atom"
 
 [dependencies]
-num-bigint = "0.4"
+num-bigint = "0.5"
 num-traits = "0.2"
