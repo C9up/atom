@@ -11,8 +11,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 atom-engine = { path = "../atom-engine" }
-napi = { version = "2", features = ["serde-json"] }
-napi-derive = { version = "2", features = ["type-def"] }
+napi = { version = "3", features = ["serde-json"] }
+napi-derive = { version = "3", features = ["type-def"] }
 
 [build-dependencies]
 napi-build = "2"
