@@ -121,9 +121,7 @@ describe("Atom", () => {
 	it("supports pow operation", () => {
 		expect(new Decimal("1.5").pow(3).toString()).toBe("3.375");
 		expect(new Decimal("2").pow(-2).toString()).toBe("0.25");
-		expect(() => new Decimal("2").pow(-2147483648)).toThrow(
-			/Invalid exponent/,
-		);
+		expect(() => new Decimal("2").pow(-2147483648)).toThrow(/Invalid exponent/);
 	});
 
 	it("supports sqrt operation", () => {
@@ -131,9 +129,9 @@ describe("Atom", () => {
 		expect(
 			new Decimal("2").sqrt({ precision: 3, mode: "half-up" }).toString(),
 		).toBe("1.414");
-		expect(new Decimal("4").sqrt({ precision: 3, mode: "half-up" }).toString()).toBe(
-			"2",
-		);
+		expect(
+			new Decimal("4").sqrt({ precision: 3, mode: "half-up" }).toString(),
+		).toBe("2");
 		expect(
 			new Decimal("6.25").sqrt({ precision: 2, mode: "half-even" }).toString(),
 		).toBe("2.5");
@@ -217,9 +215,9 @@ describe("Atom", () => {
 	it("supports quantize", () => {
 		expect(new Decimal("10.27").quantize("0.05").toString()).toBe("10.25");
 		expect(new Decimal("10.28").quantize("0.05").toString()).toBe("10.3");
-		expect(new Decimal("1.06").quantize("0.1", { precision: 0 }).toString()).toBe(
-			"1.1",
-		);
+		expect(
+			new Decimal("1.06").quantize("0.1", { precision: 0 }).toString(),
+		).toBe("1.1");
 	});
 
 	it("supports allocate", () => {
@@ -368,15 +366,15 @@ describe("atom > unsafe decimal inputs", () => {
 
 describe("atom > exact rounding regressions", () => {
 	it("rounds sqrt exactly across all non-trunc modes", () => {
-		expect(new Decimal("2").sqrt({ precision: 0, mode: "floor" }).toString()).toBe(
-			"1",
-		);
-		expect(new Decimal("2").sqrt({ precision: 0, mode: "ceil" }).toString()).toBe(
-			"2",
-		);
-		expect(new Decimal("4").sqrt({ precision: 0, mode: "ceil" }).toString()).toBe(
-			"2",
-		);
+		expect(
+			new Decimal("2").sqrt({ precision: 0, mode: "floor" }).toString(),
+		).toBe("1");
+		expect(
+			new Decimal("2").sqrt({ precision: 0, mode: "ceil" }).toString(),
+		).toBe("2");
+		expect(
+			new Decimal("4").sqrt({ precision: 0, mode: "ceil" }).toString(),
+		).toBe("2");
 		expect(
 			new Decimal("6.25").sqrt({ precision: 0, mode: "half-up" }).toString(),
 		).toBe("3");
@@ -386,12 +384,12 @@ describe("atom > exact rounding regressions", () => {
 	});
 
 	it("quantize uses exact rational rounding modes", () => {
-		expect(new Decimal("1.06").quantize("0.1", { mode: "floor" }).toString()).toBe(
-			"1",
-		);
-		expect(new Decimal("1.01").quantize("0.1", { mode: "ceil" }).toString()).toBe(
-			"1.1",
-		);
+		expect(
+			new Decimal("1.06").quantize("0.1", { mode: "floor" }).toString(),
+		).toBe("1");
+		expect(
+			new Decimal("1.01").quantize("0.1", { mode: "ceil" }).toString(),
+		).toBe("1.1");
 		expect(
 			new Decimal("1.25").quantize("0.5", { mode: "half-even" }).toString(),
 		).toBe("1");

@@ -48,7 +48,9 @@ describe("native/fallback parity", () => {
 				);
 				if (b !== "0") {
 					expect(
-						fallbackResult(() => new Decimal(a).div(b, { precision: 8 }).toString()),
+						fallbackResult(() =>
+							new Decimal(a).div(b, { precision: 8 }).toString(),
+						),
 					).toBe(
 						nativeResult(() =>
 							new Decimal(a).div(b, { precision: 8 }).toString(),

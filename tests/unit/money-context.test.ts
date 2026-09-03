@@ -23,7 +23,8 @@ describe("Decimal safe parsing", () => {
 
 		const bad = Decimal.safeParse({});
 		expect(bad.success).toBe(false);
-		if (!bad.success) expect(bad.error.message).toMatch(/Invalid decimal input/);
+		if (!bad.success)
+			expect(bad.error.message).toMatch(/Invalid decimal input/);
 	});
 });
 
@@ -39,9 +40,9 @@ describe("Atom context", () => {
 		configureAtomContext({ precision: 4, roundMode: "ceil" });
 		expect(new Decimal("1").div("3").toString()).toBe("0.3333");
 		expect(new Decimal("2").sqrt({ precision: 0 }).toString()).toBe("2");
-		expect(new Decimal("2").sqrt({ precision: 0, mode: "floor" }).toString()).toBe(
-			"1",
-		);
+		expect(
+			new Decimal("2").sqrt({ precision: 0, mode: "floor" }).toString(),
+		).toBe("1");
 		resetAtomContext();
 	});
 
