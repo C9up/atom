@@ -77,25 +77,25 @@ function avgImpl(values: Iterable<DecimalInput>): Decimal {
 }
 
 function minImpl(values: Iterable<DecimalInput>): Decimal {
-	const list = [...values].map((value) => new Decimal(value));
-	if (list.length === 0) {
+	const [first, ...rest] = [...values].map((value) => new Decimal(value));
+	if (first === undefined) {
 		throw new Error("Atom.min requires at least one value");
 	}
-	let best = list[0];
-	for (let i = 1; i < list.length; i++) {
-		if (list[i].lt(best)) best = list[i];
+	let best = first;
+	for (const candidate of rest) {
+		if (candidate.lt(best)) best = candidate;
 	}
 	return best;
 }
 
 function maxImpl(values: Iterable<DecimalInput>): Decimal {
-	const list = [...values].map((value) => new Decimal(value));
-	if (list.length === 0) {
+	const [first, ...rest] = [...values].map((value) => new Decimal(value));
+	if (first === undefined) {
 		throw new Error("Atom.max requires at least one value");
 	}
-	let best = list[0];
-	for (let i = 1; i < list.length; i++) {
-		if (list[i].gt(best)) best = list[i];
+	let best = first;
+	for (const candidate of rest) {
+		if (candidate.gt(best)) best = candidate;
 	}
 	return best;
 }
@@ -110,9 +110,14 @@ function medianImpl(
 	}
 	list.sort((a, b) => a.cmp(b));
 	const mid = Math.floor(list.length / 2);
-	if (list.length % 2 === 1) return list[mid];
+	// The empty case threw above, so both halves of the middle are present.
+	const upper = list[mid];
+	if (upper === undefined) throw new Error("Atom.median lost its middle value");
+	if (list.length % 2 === 1) return upper;
+	const lower = list[mid - 1];
+	if (lower === undefined) throw new Error("Atom.median lost its middle value");
 	const precision = options.precision ?? defaultPrecision();
-	return list[mid - 1].plus(list[mid]).div("2", { precision });
+	return lower.plus(upper).div("2", { precision });
 }
 
 function modeImpl(values: Iterable<DecimalInput>): Decimal[] {

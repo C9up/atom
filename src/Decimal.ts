@@ -466,8 +466,7 @@ export class Decimal {
 		const remainders: Array<{ index: number; remainder: bigint }> = [];
 		let consumed = 0n;
 
-		for (let index = 0; index < normalized.length; index++) {
-			const ratio = normalized[index];
+		for (const [index, ratio] of normalized.entries()) {
 			const weighted = total * ratio;
 			const share = weighted / ratioTotal;
 			const remainder = weighted % ratioTotal;
@@ -485,7 +484,13 @@ export class Decimal {
 
 		let pointer = 0;
 		while (left > 0n) {
-			baseShares[remainders[pointer].index] += 1n;
+			// `remainders` has one entry per ratio and the pointer wraps inside
+			// it, so both reads land; naming them is what says so.
+			const target = remainders[pointer];
+			if (target === undefined) break;
+			const share = baseShares[target.index];
+			if (share === undefined) break;
+			baseShares[target.index] = share + 1n;
 			left -= 1n;
 			pointer++;
 			if (pointer >= remainders.length) pointer = 0;
@@ -642,7 +647,7 @@ function decimalStringFromNumber(value: number): string {
 
 	const [coefficient, exponentRaw] = raw.toLowerCase().split("e");
 	const exponent = Number(exponentRaw);
-	if (!Number.isInteger(exponent)) {
+	if (coefficient === undefined || !Number.isInteger(exponent)) {
 		throw new Error(`Invalid decimal: ${value}`);
 	}
 	const negative = coefficient.startsWith("-");
@@ -650,7 +655,7 @@ function decimalStringFromNumber(value: number): string {
 		negative || coefficient.startsWith("+")
 			? coefficient.slice(1)
 			: coefficient;
-	const [wholeRaw, fracRaw = ""] = unsigned.split(".");
+	const [wholeRaw = "", fracRaw = ""] = unsigned.split(".");
 	const digits = `${wholeRaw}${fracRaw}`;
 	const decimalIndex = wholeRaw.length + exponent;
 
@@ -1016,8 +1021,8 @@ function getLocaleGrouping(locales?: Intl.LocalesArgument): GroupingSpec {
 	if (lengths.length < 2) {
 		return { primary: 3, secondary: 3 };
 	}
-	const primary = lengths[lengths.length - 1];
-	const secondary = lengths[lengths.length - 2] ?? primary;
+	const primary = lengths.at(-1) ?? 3;
+	const secondary = lengths.at(-2) ?? primary;
 	return { primary, secondary };
 }
 
@@ -1054,11 +1059,14 @@ function validateLocalizedSyntax(
 	}
 	for (let i = groups.length - 1, distance = 0; i >= 0; i--, distance++) {
 		const size = distance === 0 ? grouping.primary : grouping.secondary;
+		const group = groups[i];
+		if (group === undefined)
+			throw new Error(`Invalid localized decimal: ${value}`);
 		if (i === 0) {
-			if (groups[i].length < 1 || groups[i].length > size) {
+			if (group.length < 1 || group.length > size) {
 				throw new Error(`Invalid localized decimal: ${value}`);
 			}
-		} else if (groups[i].length !== size) {
+		} else if (group.length !== size) {
 			throw new Error(`Invalid localized decimal: ${value}`);
 		}
 	}
