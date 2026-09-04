@@ -27,7 +27,7 @@
     "test:napi": "node scripts/verify-napi.mjs",
     "bench": "pnpm build && node scripts/bench.mjs",
     "build:wasm": "wasm-pack build --target web crates/atom-engine-wasm --out-dir ../../wasm",
-    "lint": "biome check src/",
+    "lint": "biome check src/ tests/",
     "test:coverage": "vitest run --coverage",
     "prepublishOnly": "tsc -p tsconfig.build.json && pnpm build:wasm && node scripts/verify-wasm.mjs"
   },
@@ -43,8 +43,16 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
     "@types/node": "^22.19.15",
+    "@vitest/coverage-v8": "^4.1.2",
     "typescript": "^6.0.2",
     "vitest": "^4.1.2"
+  },
+  "pnpm": {
+    "//": "Pin the coverage toolchain to the version used in dev. Without a committed lockfile the standalone CI resolves fresh, and v8 branch-counting differs enough between releases to cross a threshold on its own. Overrides only apply when this package is the install root (CI), so the monorepo workspace is unaffected.",
+    "overrides": {
+      "@vitest/coverage-v8": "4.1.11",
+      "vitest": "4.1.11"
+    }
   },
   "engines": {
     "node": ">=22.0.0"

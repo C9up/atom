@@ -139,9 +139,13 @@ export class Decimal {
 		localesOrRosetta?: Intl.LocalesArgument | RosettaLike,
 	): Decimal {
 		if (isRosettaLike(localesOrRosetta)) {
-			return new Decimal(normalizeViaRosetta(value, localesOrRosetta));
+			return new Decimal(
+				normalizeLocalized(value, shapeFromRosetta(localesOrRosetta)),
+			);
 		}
-		return new Decimal(normalizeLocaleNumber(value, localesOrRosetta));
+		return new Decimal(
+			normalizeLocalized(value, shapeFromIntl(localesOrRosetta)),
+		);
 	}
 
 	plus(other: DecimalInput): Decimal {
@@ -576,10 +580,7 @@ export class Decimal {
 		if (isRosettaLike(localesOrRosetta)) {
 			return localesOrRosetta.formatNumberString(this.#value, options);
 		}
-		const formatter = new Intl.NumberFormat(
-			localesOrRosetta,
-			options,
-		) as StringFormatter;
+		const formatter = stringFormatter(localesOrRosetta, options);
 		if (this.isInteger()) {
 			return formatter.format(BigInt(this.#value));
 		}
@@ -596,6 +597,20 @@ export class Decimal {
  */
 interface StringFormatter extends Intl.NumberFormat {
 	format(value: number | bigint | string): string;
+}
+
+/**
+ * A formatter typed with that overload.
+ *
+ * A method parameter is compared bivariantly, so the constructed formatter
+ * satisfies the wider signature on its own — the assertion that used to sit
+ * here was claiming something the compiler could check.
+ */
+function stringFormatter(
+	locales?: Intl.LocalesArgument,
+	options?: Intl.NumberFormatOptions,
+): StringFormatter {
+	return new Intl.NumberFormat(locales, options);
 }
 
 function normalizeInput(value: DecimalInput): string {
@@ -871,125 +886,107 @@ function isRosettaLike(arg: unknown): arg is RosettaLike {
 		typeof arg === "object" &&
 		arg !== null &&
 		"getNumberFormatData" in arg &&
-		typeof (arg as RosettaLike).getNumberFormatData === "function" &&
+		typeof arg.getNumberFormatData === "function" &&
 		"formatNumberString" in arg &&
-		typeof (arg as RosettaLike).formatNumberString === "function"
+		typeof arg.formatNumberString === "function"
 	);
 }
 
-function normalizeViaRosetta(input: string, rosetta: RosettaLike): string {
-	const trimmed = input.trim();
-	if (!trimmed) {
-		throw new Error("Invalid localized decimal: empty string");
-	}
+/**
+ * Everything reading one locale's numbers takes.
+ *
+ * There is one normalizer, and both ways of naming a locale build one of
+ * these for it. Written as two normalizers, the Rosetta one carried a subset
+ * of the rules: it substituted the separators but never mapped the locale's
+ * digits and validated grouping against the 3-3 of en-US whatever the locale
+ * actually grouped by. `parseLocale('١٬٢٣٤٫٥٦', 'ar-EG')` and
+ * `parseLocale('١٬٢٣٤٫٥٦', rosetta)` therefore disagreed about the same locale
+ * — the second refused it — and so did every Indic locale, whose 3-2 grouping
+ * only the first one asked about.
+ */
+interface LocaleNumberShape {
+	decimal: string;
+	group: string;
+	minus: string;
+	plusSign: string;
+	/** The locale's digits, mapped back to ASCII. Empty when they are ASCII. */
+	digits: ReadonlyMap<string, string>;
+	grouping: GroupingSpec;
+}
+
+interface GroupingSpec {
+	primary: number;
+	secondary: number;
+}
+
+/** Format a decimal string the way one locale writes it. */
+type FormatNumber = (
+	value: string,
+	options?: Intl.NumberFormatOptions,
+) => string;
+
+function shapeFromIntl(locales?: Intl.LocalesArgument): LocaleNumberShape {
+	const format: FormatNumber = (value, options) =>
+		stringFormatter(locales, options).format(value);
+	const parts = new Intl.NumberFormat(locales).formatToParts(-12345.6);
+	const signed = new Intl.NumberFormat(locales, {
+		signDisplay: "always",
+	}).formatToParts(1);
+	const group = parts.find((part) => part.type === "group")?.value ?? ",";
+	const digits = digitsOf(format);
+	return {
+		decimal: parts.find((part) => part.type === "decimal")?.value ?? ".",
+		group,
+		minus: parts.find((part) => part.type === "minusSign")?.value ?? "-",
+		plusSign: signed.find((part) => part.type === "plusSign")?.value ?? "+",
+		digits,
+		grouping: groupingOf(format, group, digits),
+	};
+}
+
+/**
+ * The same shape, read off a Rosetta.
+ *
+ * `getNumberFormatData` names the separators; the digits and the grouping come
+ * out of `formatNumberString`, which the same interface already declares — so
+ * the Rosetta path honours its fallback chain for all four without asking the
+ * caller for a locale tag it deliberately does not take.
+ */
+function shapeFromRosetta(rosetta: RosettaLike): LocaleNumberShape {
+	const format: FormatNumber = (value, options) =>
+		rosetta.formatNumberString(value, options);
 	const raw = rosetta.getNumberFormatData();
-	// Guard: a malformed `RosettaLike` returning empty separators
-	// would produce regexes matching every position. Fall back to
-	// ASCII defaults rather than corrupting the input.
-	const data = {
+	// A malformed `RosettaLike` returning empty separators would build regexes
+	// matching every position. Fall back to ASCII rather than corrupt the input.
+	const group = raw.group || ",";
+	const digits = digitsOf(format);
+	return {
 		decimal: raw.decimal || ".",
-		group: raw.group || ",",
+		group,
 		minus: raw.minus || "-",
 		plusSign: raw.plusSign || "+",
+		digits,
+		grouping: groupingOf(format, group, digits),
 	};
-	let normalized = trimmed.replace(/\s| | /g, "");
-	if (data.minus !== "-") {
-		normalized = normalized.replace(
-			new RegExp(escapeRegExp(data.minus), "g"),
-			"-",
-		);
-	}
-	normalized = normalized.replace(/[−﹣－]/g, "-");
-	// Substitute the locale's plus sign (e.g., U+FF0B `＋`,
-	// U+FB29 `﬩`) to ASCII so the strict validator accepts it.
-	if (data.plusSign !== "+") {
-		normalized = normalized.replace(
-			new RegExp(escapeRegExp(data.plusSign), "g"),
-			"+",
-		);
-	}
-
-	if (/^\(.*\)$/.test(normalized)) {
-		normalized = `-${normalized.slice(1, -1)}`;
-	}
-
-	validateLocalizedSyntax(normalized, data.group, data.decimal);
-	normalized = normalized.replace(
-		new RegExp(escapeRegExp(data.group), "g"),
-		"",
-	);
-	normalized = normalized.replace(
-		new RegExp(escapeRegExp(data.decimal), "g"),
-		".",
-	);
-
-	if (!/^[+-]?\d+(\.\d+)?$/.test(normalized)) {
-		throw new Error(`Invalid localized decimal: ${input}`);
-	}
-	return normalized;
 }
 
-function normalizeLocaleNumber(
-	input: string,
-	locales?: Intl.LocalesArgument,
-): string {
-	const trimmed = input.trim();
-	if (!trimmed) {
-		throw new Error("Invalid localized decimal: empty string");
-	}
-
-	const formatter = new Intl.NumberFormat(locales);
-	const parts = formatter.formatToParts(-12345.6);
-	const group = parts.find((part) => part.type === "group")?.value ?? ",";
-	const decimal = parts.find((part) => part.type === "decimal")?.value ?? ".";
-	const minus = parts.find((part) => part.type === "minusSign")?.value ?? "-";
-
-	let normalized = normalizeLocaleDigits(trimmed, locales);
-	normalized = normalized.replace(/\s|\u00A0|\u202F/g, "");
-	if (minus !== "-") {
-		normalized = normalized.replace(new RegExp(escapeRegExp(minus), "g"), "-");
-	}
-	normalized = normalized.replace(/[−﹣－]/g, "-");
-
-	if (/^\(.*\)$/.test(normalized)) {
-		normalized = `-${normalized.slice(1, -1)}`;
-	}
-
-	validateLocalizedSyntax(
-		normalized,
-		group,
-		decimal,
-		getLocaleGrouping(locales),
-	);
-	normalized = normalized.replace(new RegExp(escapeRegExp(group), "g"), "");
-	normalized = normalized.replace(new RegExp(escapeRegExp(decimal), "g"), ".");
-
-	if (!/^[+-]?\d+(\.\d+)?$/.test(normalized)) {
-		throw new Error(`Invalid localized decimal: ${input}`);
-	}
-	return normalized;
-}
-
-function normalizeLocaleDigits(
-	input: string,
-	locales?: Intl.LocalesArgument,
-): string {
-	const digitMap = getLocaleDigitMap(locales);
-	let out = "";
-	for (const char of input) {
-		out += digitMap.get(char) ?? char;
-	}
-	return out;
-}
-
-function getLocaleDigitMap(
-	locales?: Intl.LocalesArgument,
-): Map<string, string> {
-	const formatter = new Intl.NumberFormat(locales, { useGrouping: false });
-	const digits = formatter.format(9876543210);
+/**
+ * The locale's ten digits, read off the formatter rather than a table.
+ *
+ * One call names all ten in a known order, so a numbering system whose code
+ * points are not contiguous — or one the runtime added after this was written
+ * — needs nothing here.
+ */
+function digitsOf(format: FormatNumber): ReadonlyMap<string, string> {
 	const map = new Map<string, string>();
+	let formatted: string;
+	try {
+		formatted = format("9876543210", { useGrouping: false });
+	} catch {
+		return map;
+	}
 	let value = 9;
-	for (const char of digits) {
+	for (const char of formatted) {
 		if (!map.has(char) && value >= 0) {
 			map.set(char, String(value));
 			value--;
@@ -998,32 +995,92 @@ function getLocaleDigitMap(
 	return map;
 }
 
-interface GroupingSpec {
-	primary: number;
-	secondary: number;
-}
-
-function getLocaleGrouping(locales?: Intl.LocalesArgument): GroupingSpec {
-	const parts = new Intl.NumberFormat(locales)
-		.formatToParts(1234567890123)
-		.filter((part) => part.type === "integer" || part.type === "group");
-	const lengths: number[] = [];
-	let current = 0;
-	for (const part of parts) {
-		if (part.type === "integer") {
-			current += [...part.value].length;
-		} else {
-			lengths.push(current);
-			current = 0;
-		}
+/**
+ * How wide the locale's groups are — 3-3 for `1,234,567`, 3-2 for the Indic
+ * `12,34,567`. Measured on a number long enough to show both.
+ */
+function groupingOf(
+	format: FormatNumber,
+	group: string,
+	digits: ReadonlyMap<string, string>,
+): GroupingSpec {
+	const fallback: GroupingSpec = { primary: 3, secondary: 3 };
+	let formatted: string;
+	try {
+		formatted = format("1234567890123");
+	} catch {
+		return fallback;
 	}
-	lengths.push(current);
-	if (lengths.length < 2) {
-		return { primary: 3, secondary: 3 };
-	}
+	const segments = toAsciiDigits(formatted, digits).split(group);
+	if (segments.length < 2) return fallback;
+	// Code points, not UTF-16 units: a digit outside the BMP counts once.
+	const lengths = segments.map((segment) => [...segment].length);
 	const primary = lengths.at(-1) ?? 3;
 	const secondary = lengths.at(-2) ?? primary;
 	return { primary, secondary };
+}
+
+function toAsciiDigits(
+	input: string,
+	digits: ReadonlyMap<string, string>,
+): string {
+	if (digits.size === 0) return input;
+	let out = "";
+	for (const char of input) {
+		out += digits.get(char) ?? char;
+	}
+	return out;
+}
+
+function normalizeLocalized(input: string, shape: LocaleNumberShape): string {
+	const trimmed = input.trim();
+	if (!trimmed) {
+		throw new Error("Invalid localized decimal: empty string");
+	}
+
+	let normalized = toAsciiDigits(trimmed, shape.digits);
+	// `\s` already covers U+00A0 and U+202F, which is what the space-grouping
+	// locales separate with.
+	normalized = normalized.replace(/\s/g, "");
+	if (shape.minus !== "-") {
+		normalized = normalized.replace(
+			new RegExp(escapeRegExp(shape.minus), "g"),
+			"-",
+		);
+	}
+	normalized = normalized.replace(/[−﹣－]/g, "-");
+	// The locale's plus sign (e.g. U+FF0B `＋`, U+FB29 `﬩`) becomes ASCII so the
+	// strict validator below accepts it.
+	if (shape.plusSign !== "+") {
+		normalized = normalized.replace(
+			new RegExp(escapeRegExp(shape.plusSign), "g"),
+			"+",
+		);
+	}
+
+	if (/^\(.*\)$/.test(normalized)) {
+		normalized = `-${normalized.slice(1, -1)}`;
+	}
+
+	validateLocalizedSyntax(
+		normalized,
+		shape.group,
+		shape.decimal,
+		shape.grouping,
+	);
+	normalized = normalized.replace(
+		new RegExp(escapeRegExp(shape.group), "g"),
+		"",
+	);
+	normalized = normalized.replace(
+		new RegExp(escapeRegExp(shape.decimal), "g"),
+		".",
+	);
+
+	if (!/^[+-]?\d+(\.\d+)?$/.test(normalized)) {
+		throw new Error(`Invalid localized decimal: ${input}`);
+	}
+	return normalized;
 }
 
 function validateLocalizedSyntax(

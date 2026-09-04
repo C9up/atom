@@ -12,13 +12,34 @@ export interface MoneyFormatOptions
 	locale?: Intl.LocalesArgument;
 }
 
+/**
+ * ISO 4217 minor units, for every currency that does not have two.
+ *
+ * Only the exceptions are listed; anything absent is two, which is what the
+ * lookups below fall back to. Written as a partial list of the ones someone
+ * happened to think of, the fallback answered for the rest — and answered
+ * wrong. A `Money` built for ISK, whose króna has no subunit, was held at two
+ * decimals: `toMinorUnits()` returned 123400 for 1234 króna, a hundredfold
+ * error on its way into an integer column, `toString()` printed a fractional
+ * part the currency does not have, and `format()` asked Intl for two decimals
+ * it would otherwise have refused to print. JPY, three lines away in the same
+ * table, was correct — the difference between the two was which one someone
+ * had typed in.
+ *
+ * ISO is the source of truth here, not CLDR, and they disagree on one entry:
+ * ISO gives IQD three minor units, `Intl` prints zero. `format()` passes this
+ * scale to Intl explicitly, so the value keeps the fils ISO says it has.
+ */
 const ISO_MINOR_UNITS: Record<string, number> = Object.freeze({
 	BHD: 3,
+	BIF: 0,
 	CLF: 4,
 	CLP: 0,
 	DJF: 0,
-	EUR: 2,
-	GBP: 2,
+	GNF: 0,
+	IQD: 3,
+	ISK: 0,
+	JOD: 3,
 	JPY: 0,
 	KMF: 0,
 	KRW: 0,
@@ -26,9 +47,13 @@ const ISO_MINOR_UNITS: Record<string, number> = Object.freeze({
 	LYD: 3,
 	OMR: 3,
 	PYG: 0,
+	RWF: 0,
 	TND: 3,
-	USD: 2,
+	UGX: 0,
+	UYI: 0,
+	UYW: 4,
 	VND: 0,
+	VUV: 0,
 	XAF: 0,
 	XOF: 0,
 	XPF: 0,

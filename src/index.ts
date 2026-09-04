@@ -46,13 +46,36 @@ function isDecimalIterable(value: unknown): value is Iterable<DecimalInput> {
 	);
 }
 
-function resolveValues(
-	args: [Iterable<DecimalInput>] | DecimalInput[],
-): Iterable<DecimalInput> {
-	if (args.length === 1 && isDecimalIterable(args[0])) {
-		return args[0] as Iterable<DecimalInput>;
-	}
-	return args as DecimalInput[];
+/**
+ * What every aggregate accepts as one value.
+ *
+ * The variadic form used to be asserted back into shape — a claim about the
+ * caller's arguments made in the one place that can check them. Anything else
+ * reached `new Decimal(...)`, where an object failed as
+ * `input.trim is not a function`, naming neither the argument nor the call.
+ */
+function isDecimalValue(value: unknown): value is DecimalInput {
+	return (
+		Decimal.isDecimal(value) ||
+		typeof value === "string" ||
+		typeof value === "number" ||
+		typeof value === "bigint"
+	);
+}
+
+function toDecimalValue(value: unknown): DecimalInput {
+	if (isDecimalValue(value)) return value;
+	throw new Error(
+		`Atom aggregates take a string, number, bigint or Decimal, got ${
+			value === null ? "null" : typeof value
+		}`,
+	);
+}
+
+function resolveValues(args: readonly unknown[]): Iterable<DecimalInput> {
+	const head = args[0];
+	if (args.length === 1 && isDecimalIterable(head)) return head;
+	return args.map(toDecimalValue);
 }
 
 function sumImpl(values: Iterable<DecimalInput>): Decimal {
@@ -167,32 +190,39 @@ function stddevImpl(
 	return variance.sqrt({ precision, mode });
 }
 
+/**
+ * The trailing options object of `median(values, options)` / `stddev(values,
+ * options)`, or `{}`.
+ *
+ * A `Decimal` is an object too, so excluding it is what lets the compiler
+ * check the narrowing instead of being told the answer.
+ */
+function optionsFrom<T extends MedianOptions | StddevOptions>(
+	value: DecimalInput | T | undefined,
+): T | Record<string, never> {
+	if (typeof value !== "object" || value === null) return {};
+	if (Decimal.isDecimal(value)) return {};
+	return value;
+}
+
 function parseMedianArgs(
 	args: [Iterable<DecimalInput>, MedianOptions?] | DecimalInput[],
 ): { values: Iterable<DecimalInput>; options: MedianOptions } {
-	if (args.length >= 1 && isDecimalIterable(args[0])) {
-		const values = args[0] as Iterable<DecimalInput>;
-		const options =
-			args.length > 1 && typeof args[1] === "object" && args[1] !== null
-				? (args[1] as MedianOptions)
-				: {};
-		return { values, options };
+	const head = args[0];
+	if (isDecimalIterable(head)) {
+		return { values: head, options: optionsFrom<MedianOptions>(args[1]) };
 	}
-	return { values: args as DecimalInput[], options: {} };
+	return { values: resolveValues(args), options: {} };
 }
 
 function parseStddevArgs(
 	args: [Iterable<DecimalInput>, StddevOptions?] | DecimalInput[],
 ): { values: Iterable<DecimalInput>; options: StddevOptions } {
-	if (args.length >= 1 && isDecimalIterable(args[0])) {
-		const values = args[0] as Iterable<DecimalInput>;
-		const options =
-			args.length > 1 && typeof args[1] === "object" && args[1] !== null
-				? (args[1] as StddevOptions)
-				: {};
-		return { values, options };
+	const head = args[0];
+	if (isDecimalIterable(head)) {
+		return { values: head, options: optionsFrom<StddevOptions>(args[1]) };
 	}
-	return { values: args as DecimalInput[], options: {} };
+	return { values: resolveValues(args), options: {} };
 }
 
 function sumFn(...args: [Iterable<DecimalInput>] | DecimalInput[]): Decimal {

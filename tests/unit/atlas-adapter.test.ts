@@ -2,9 +2,6 @@
  * Unit tests for `decimalAtlasAdapter` exposed at `@c9up/atom/atlas`.
  *
  * Verifies the adapter's contract in isolation — no atlas dependency.
- * Mirrors Adonis Lucid's `@column.prepare` / `@column.consume` shape.
- *
- * @implements Story 35.10
  */
 import { describe, expect, it } from "vitest";
 import { decimalAtlasAdapter, decimalColumn } from "../../src/atlas.js";
@@ -39,9 +36,9 @@ describe("decimalAtlasAdapter", () => {
 		});
 
 		it("rejects unsafe integer numeric inputs", () => {
-			expect(() => decimalAtlasAdapter.consume(9007199254740993)).toThrow(
-				/Unsafe integer/,
-			);
+			expect(() =>
+				decimalAtlasAdapter.consume(Number.MAX_SAFE_INTEGER + 1),
+			).toThrow(/Unsafe integer/);
 		});
 
 		it("accepts bigint inputs", () => {

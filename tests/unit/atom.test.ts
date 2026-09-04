@@ -330,8 +330,14 @@ describe("atom > mode aggregate semantics (documented gap)", () => {
 });
 
 describe("atom > unsafe decimal inputs", () => {
+	// `Number.MAX_SAFE_INTEGER + 1` rather than the literal one past it: the
+	// literal does not survive being written down — it is read back as this
+	// value — so the test would have been asserting about a number it never
+	// passed.
 	it("rejects unsafe JS integer inputs", () => {
-		expect(() => new Decimal(9007199254740993)).toThrow(/Unsafe integer/);
+		expect(() => new Decimal(Number.MAX_SAFE_INTEGER + 1)).toThrow(
+			/Unsafe integer/,
+		);
 	});
 
 	it("accepts finite number inputs written by JS in scientific notation", () => {
@@ -347,12 +353,12 @@ describe("atom > unsafe decimal inputs", () => {
 	});
 
 	it("rejects unsafe integer inputs in minor-unit and allocation helpers", () => {
-		expect(() => Decimal.fromMinorUnits(9007199254740993, 2)).toThrow(
-			/Unsafe integer/,
-		);
-		expect(() => new Decimal("10").allocate([9007199254740993])).toThrow(
-			/Unsafe integer/,
-		);
+		expect(() =>
+			Decimal.fromMinorUnits(Number.MAX_SAFE_INTEGER + 1, 2),
+		).toThrow(/Unsafe integer/);
+		expect(() =>
+			new Decimal("10").allocate([Number.MAX_SAFE_INTEGER + 1]),
+		).toThrow(/Unsafe integer/);
 	});
 
 	it("bounds scales and exponents before crossing NAPI", () => {
@@ -434,5 +440,27 @@ describe("atom > aggregate error paths", () => {
 		expect(() => Atom.median([])).toThrow(/at least one/);
 		expect(() => Atom.stddev([], { sample: true })).toThrow(/at least one/);
 		expect(() => Atom.stddev(["1"], { sample: true })).toThrow(/at least two/);
+	});
+});
+
+describe("atom > what an aggregate accepts as a value", () => {
+	it("names the argument it cannot use instead of failing inside Decimal", () => {
+		// The variadic form used to be asserted into shape, so anything else
+		// reached `new Decimal(...)` and came back as
+		// `input.trim is not a function` — an error naming neither the value nor
+		// the call it came from.
+		expect(() => Atom.sum("1", { precision: 2 } as never)).toThrow(
+			/Atom aggregates take a string, number, bigint or Decimal, got object/,
+		);
+		expect(() => Atom.min("1", null as never)).toThrow(/got null/);
+	});
+
+	it("still takes the two shapes it documents", () => {
+		expect(Atom.sum("1.10", "2.20", "3.33").toString()).toBe("6.63");
+		expect(Atom.sum(["1.10", "2.20", "3.33"]).toString()).toBe("6.63");
+		expect(Atom.median(["1", "2"], { precision: 4 }).toString()).toBe("1.5");
+		expect(Atom.stddev(["2", "4"], { sample: true }).toString()).toBe(
+			new Decimal("2").sqrt().toString(),
+		);
 	});
 });

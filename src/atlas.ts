@@ -5,9 +5,8 @@
  * column pipeline. Lives on a sub-export so the default `@c9up/atom` import
  * surface stays adapter-free.
  *
- * Mirrors Adonis Lucid's `@column.prepare` / `@column.consume` pattern —
- * callbacks are baked into the entity definition; no global registry, no
- * boot-time wiring.
+ * The callbacks are baked into the entity definition: no global registry, no
+ * boot-time wiring, nothing to import in a provider.
  *
  * Usage:
  *
@@ -19,8 +18,6 @@
  *       @PrimaryKey() id!: number
  *       @Column(decimalAtlasAdapter) balance!: Decimal | null
  *     }
- *
- * @implements Story 35.10
  */
 
 import { Decimal, type RoundMode } from "./Decimal.js";

@@ -37,7 +37,15 @@ Money.fromMinorUnits(1999n, 'EUR').format({ locale: 'fr-FR' })
 ```
 
 `Money` keeps currency and scale together, and rejects operations across
-different currencies.
+different currencies. The scale comes from ISO 4217, exceptions included — a
+króna stays whole, a dinar keeps its three fils — because `toMinorUnits()` is
+what goes into an integer column, where a wrong scale is a factor of a hundred
+rather than a rounding difference. Pass `{ scale }` when the column disagrees.
+
+```ts
+money('1234', 'ISK').toMinorUnits() // 1234n
+money('10.505', 'JOD').toMinorUnits() // 10505n
+```
 
 ## Context
 
