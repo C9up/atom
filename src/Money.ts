@@ -7,6 +7,20 @@ export interface MoneyOptions {
 	mode?: RoundMode;
 }
 
+/**
+ * What `times` and `div` take.
+ *
+ * The rounding mode, and only that. They used to declare the whole
+ * {@link MoneyOptions} and forward one field of it: `scale` and `exact` were
+ * overwritten on the way through, so `.times("1.5", { scale: 4 })` came back at
+ * the currency's scale and `.times("1.333", { exact: true })` rounded anyway.
+ * Neither could ever have been honoured — a multiplied amount of money is still
+ * money, and money is held at the scale its currency has.
+ */
+export interface MoneyRoundingOptions {
+	mode?: RoundMode;
+}
+
 export interface MoneyFormatOptions
 	extends Omit<Intl.NumberFormatOptions, "style" | "currency"> {
 	locale?: Intl.LocalesArgument;
@@ -127,7 +141,7 @@ export class Money {
 		});
 	}
 
-	times(multiplier: DecimalInput, options: MoneyOptions = {}): Money {
+	times(multiplier: DecimalInput, options: MoneyRoundingOptions = {}): Money {
 		return new Money(this.#amount.times(multiplier), this.#currency, {
 			scale: this.#scale,
 			exact: false,
@@ -135,7 +149,7 @@ export class Money {
 		});
 	}
 
-	div(divisor: DecimalInput, options: MoneyOptions = {}): Money {
+	div(divisor: DecimalInput, options: MoneyRoundingOptions = {}): Money {
 		return new Money(this.#amount.div(divisor), this.#currency, {
 			scale: this.#scale,
 			exact: false,

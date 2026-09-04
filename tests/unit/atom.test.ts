@@ -9,6 +9,7 @@ import {
 	median,
 	min,
 	mode,
+	money,
 	stddev,
 	sum,
 } from "../../src/index.js";
@@ -215,9 +216,22 @@ describe("Atom", () => {
 	it("supports quantize", () => {
 		expect(new Decimal("10.27").quantize("0.05").toString()).toBe("10.25");
 		expect(new Decimal("10.28").quantize("0.05").toString()).toBe("10.3");
-		expect(
-			new Decimal("1.06").quantize("0.1", { precision: 0 }).toString(),
-		).toBe("1.1");
+		// The scale comes from the step, and only from the step. This line used
+		// to pass `{ precision: 0 }`, which was validated and then ignored — the
+		// answer is the same with it and without it.
+		expect(new Decimal("1.06").quantize("0.1").toString()).toBe("1.1");
+	});
+
+	it("keeps a rounded amount at the scale its currency has", () => {
+		// `times` and `div` declared the full MoneyOptions and forwarded `mode`
+		// alone, so these two arguments were accepted and overwritten. They are
+		// gone from the type: a multiplied amount of money is still money.
+		const price = money("13.33", "EUR");
+		expect(price.times("1.5").scale).toBe(2);
+		expect(price.times("1.333").toString()).toBe("17.77 EUR");
+		expect(price.times("1.5", { mode: "half-even" }).toString()).toBe(
+			"20.00 EUR",
+		);
 	});
 
 	it("supports allocate", () => {

@@ -43,9 +43,16 @@ export interface BetweenOptions {
 	inclusive?: boolean;
 }
 
+/**
+ * `quantize` takes a rounding mode and nothing else.
+ *
+ * It used to accept a `precision` too, which it validated and then ignored:
+ * `quantize('0.01', { precision: 4 })` answered `1.23`, the same as without it.
+ * There is nothing the option could have meant — the result's scale comes from
+ * the step, which is the whole point of quantizing to one.
+ */
 export interface QuantizeOptions {
 	mode?: RoundMode;
-	precision?: number;
 }
 
 export interface MedianOptions {
@@ -335,9 +342,6 @@ export class Decimal {
 		const stepValue = new Decimal(step);
 		if (!stepValue.gt(0)) {
 			throw new Error("Quantize step must be greater than zero");
-		}
-		if (options.precision !== undefined) {
-			assertScale(options.precision);
 		}
 		const thisParts = parseDecimal(this.#value);
 		const stepParts = parseDecimal(stepValue.#value);

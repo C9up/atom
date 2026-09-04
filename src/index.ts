@@ -26,7 +26,11 @@ export type {
 	ToMinorUnitsOptions,
 } from "./Decimal.js";
 export { Decimal } from "./Decimal.js";
-export type { MoneyFormatOptions, MoneyOptions } from "./Money.js";
+export type {
+	MoneyFormatOptions,
+	MoneyOptions,
+	MoneyRoundingOptions,
+} from "./Money.js";
 export { Money, money } from "./Money.js";
 export { isNativeAvailable } from "./native.js";
 
