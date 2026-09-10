@@ -41,11 +41,11 @@
     "wasm"
   ],
   "devDependencies": {
-    "@biomejs/biome": "^2.4.10",
-    "@types/node": "^22.19.15",
-    "@vitest/coverage-v8": "^4.1.2",
-    "typescript": "^6.0.2",
-    "vitest": "^4.1.2"
+    "@biomejs/biome": "^2.5.12",
+    "@types/node": "^22.20.1",
+    "@vitest/coverage-v8": "4.1.11",
+    "typescript": "^6.0.3",
+    "vitest": "4.1.11"
   },
   "pnpm": {
     "//": "Pin the coverage toolchain to the version used in dev. Without a committed lockfile the standalone CI resolves fresh, and v8 branch-counting differs enough between releases to cross a threshold on its own. Overrides only apply when this package is the install root (CI), so the monorepo workspace is unaffected.",
