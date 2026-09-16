@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -53,4 +54,31 @@ if (wasm.cmp('1.20', '1.2') !== 0) {
   throw new Error('[atom:wasm] cmp smoke test failed')
 }
 
-console.log('[atom:wasm] browser artifacts present and functional')
+// Present on disk is NOT the same question as present in the package, and it is
+// the weaker one. `wasm-pack` writes a `.gitignore` of `*` into its out-dir, and
+// npm honours a .gitignore nested inside a published directory even when `files`
+// lists that directory — so every check above, smoke tests included, can pass
+// while the tarball ships nothing. That is exactly how 0.1.12 went out.
+//
+// So ask the packer. `--ignore-scripts` keeps this from re-entering
+// prepublishOnly, which is what invoked us.
+const packed = JSON.parse(
+  execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], {
+    cwd: join(here, '..'),
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }),
+)[0]
+
+const shipped = new Set(packed.files.map((f) => f.path))
+for (const name of required) {
+  if (!shipped.has(`wasm/${name}`)) {
+    throw new Error(
+      `[atom:wasm] wasm/${name} is on disk but NOT in the tarball — something is excluding it ` +
+        `(a .gitignore or .npmignore nested in wasm/ will do this even though "wasm" is in package.json files). ` +
+        `Run \`node scripts/clean-wasm-pack-meta.mjs\` after wasm-pack.`,
+    )
+  }
+}
+
+console.log(`[atom:wasm] browser artifacts present, functional, and in the tarball (${shipped.size} files)`)
