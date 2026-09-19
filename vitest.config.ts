@@ -2,6 +2,10 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
 	test: {
+		setupFiles: ["./tests/warmup.ts"],
+		// The suite's own work is milliseconds; this budget covers a cold
+		// Windows runner loading the native binary and ICU, nothing else.
+		testTimeout: 20_000,
 		coverage: {
 			provider: "v8",
 			include: ["src/**"],
