@@ -3,9 +3,9 @@ use num_traits::{Signed, Zero};
 use std::cmp::Ordering;
 
 #[derive(Clone, Debug)]
-struct Decimal {
-    int: BigInt,
-    scale: u32,
+pub(crate) struct Decimal {
+    pub(crate) int: BigInt,
+    pub(crate) scale: u32,
 }
 
 pub fn add(a: &str, b: &str) -> Result<String, String> {
@@ -26,6 +26,72 @@ pub fn mul(a: &str, b: &str) -> Result<String, String> {
     let da = parse_decimal(a)?;
     let db = parse_decimal(b)?;
     Ok(format_decimal(da.int * db.int, da.scale + db.scale))
+}
+
+/// Sum a whole batch in ONE crossing of the boundary.
+///
+/// Identical in result to folding `add` over the same values — decimal
+/// addition is exact and associative, and `format_decimal` normalises the
+/// output — but it parses and formats once instead of once per pair. That is
+/// what it exists for: the cost of `Decimal` arithmetic from JavaScript is
+/// almost entirely the string round trip, not the arithmetic, so a caller
+/// summing a hundred thousand values pays a hundred thousand crossings for
+/// work this does in one.
+///
+/// An empty batch is `0`: the additive identity, and the only answer that
+/// keeps `sum(a) + sum(b) == sum(a ++ b)` true when one side is empty.
+pub fn sum(values: &[String]) -> Result<String, String> {
+    let parsed = values
+        .iter()
+        .map(|value| parse_decimal(value))
+        .collect::<Result<Vec<Decimal>, String>>()?;
+
+    let scale = parsed.iter().map(|d| d.scale).max().unwrap_or(0);
+    let mut total = BigInt::zero();
+    for decimal in &parsed {
+        // Raised to the common scale rather than rounded to it: every value
+        // keeps every digit it came with, which is what makes this exact.
+        total += &decimal.int * pow10(scale - decimal.scale);
+    }
+    Ok(format_decimal(total, scale))
+}
+
+/// The sum of pairwise products — `Σ aᵢ·bᵢ` — in one crossing.
+///
+/// The shape of every valuation this ecosystem performs: a quantity times a
+/// price, added up. Exact for the same reason `mul` is — a product's scale is
+/// the sum of its operands' scales, and nothing is rounded on the way — so it
+/// agrees digit for digit with multiplying and adding one pair at a time.
+///
+/// Refuses mismatched lengths rather than stopping at the shorter one: a
+/// quantity list and a price list of different lengths is a caller's bug, and
+/// silently valuing the first n positions would return a plausible number for
+/// a portfolio nobody holds.
+pub fn dot(a: &[String], b: &[String]) -> Result<String, String> {
+    if a.len() != b.len() {
+        return Err(format!(
+            "Mismatched batch lengths: {} and {}",
+            a.len(),
+            b.len()
+        ));
+    }
+
+    let mut products: Vec<Decimal> = Vec::with_capacity(a.len());
+    for (left, right) in a.iter().zip(b.iter()) {
+        let da = parse_decimal(left)?;
+        let db = parse_decimal(right)?;
+        products.push(Decimal {
+            int: da.int * db.int,
+            scale: da.scale + db.scale,
+        });
+    }
+
+    let scale = products.iter().map(|d| d.scale).max().unwrap_or(0);
+    let mut total = BigInt::zero();
+    for product in &products {
+        total += &product.int * pow10(scale - product.scale);
+    }
+    Ok(format_decimal(total, scale))
 }
 
 pub fn div(a: &str, b: &str, precision: u32) -> Result<String, String> {
@@ -161,7 +227,7 @@ pub fn cmp(a: &str, b: &str) -> Result<i32, String> {
     })
 }
 
-fn parse_decimal(input: &str) -> Result<Decimal, String> {
+pub(crate) fn parse_decimal(input: &str) -> Result<Decimal, String> {
     let s = input.trim();
     if s.is_empty() {
         return Err("Invalid decimal: empty string".to_string());
@@ -219,7 +285,7 @@ fn align_scale(a: &Decimal, b: &Decimal) -> (BigInt, BigInt, u32) {
     (&a.int * factor, b.int.clone(), b.scale)
 }
 
-fn format_decimal(int: BigInt, scale: u32) -> String {
+pub(crate) fn format_decimal(int: BigInt, scale: u32) -> String {
     if scale == 0 {
         return int.to_string();
     }
@@ -252,7 +318,7 @@ fn format_decimal(int: BigInt, scale: u32) -> String {
     out
 }
 
-fn pow10(exp: u32) -> BigInt {
+pub(crate) fn pow10(exp: u32) -> BigInt {
     let mut acc = BigInt::from(1u32);
     for _ in 0..exp {
         acc *= 10u32;
@@ -342,6 +408,60 @@ mod tests {
         assert_eq!(sqrt("2", 6).unwrap(), "1.414213");
         assert_eq!(sqrt("0", 6).unwrap(), "0");
         assert!(sqrt("-1", 6).is_err());
+    }
+
+    /// The batch API must agree with the pairwise one, digit for digit —
+    /// otherwise a screen that sums a column disagrees with one that folds it.
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| v.to_string()).collect()
+    }
+
+    #[test]
+    fn sum_agrees_with_folding_add() {
+        let values = strings(&["0.1", "0.2", "1.005", "-3", "2.70"]);
+        let folded = values
+            .iter()
+            .fold("0".to_string(), |acc, v| add(&acc, v).unwrap());
+        assert_eq!(sum(&values).unwrap(), folded);
+        assert_eq!(sum(&values).unwrap(), "1.005");
+    }
+
+    #[test]
+    fn sum_of_nothing_is_zero() {
+        assert_eq!(sum(&[]).unwrap(), "0");
+    }
+
+    #[test]
+    fn sum_keeps_every_digit_it_was_given() {
+        // Scales are RAISED to the common one, never rounded to it.
+        assert_eq!(sum(&strings(&["1.00000001", "2"])).unwrap(), "3.00000001");
+    }
+
+    #[test]
+    fn sum_refuses_a_malformed_member() {
+        assert!(sum(&strings(&["1", "abc"])).is_err());
+    }
+
+    #[test]
+    fn dot_agrees_with_multiplying_pair_by_pair() {
+        let q = strings(&["100", "2.5", "-3"]);
+        let p = strings(&["52.37", "1000.01", "7.5"]);
+        let folded = q.iter().zip(p.iter()).fold("0".to_string(), |acc, (a, b)| {
+            add(&acc, &mul(a, b).unwrap()).unwrap()
+        });
+        assert_eq!(dot(&q, &p).unwrap(), folded);
+    }
+
+    #[test]
+    fn dot_refuses_mismatched_lengths() {
+        // Valuing the first n positions would return a plausible number for a
+        // portfolio nobody holds.
+        assert!(dot(&strings(&["1", "2"]), &strings(&["3"])).is_err());
+    }
+
+    #[test]
+    fn dot_of_nothing_is_zero() {
+        assert_eq!(dot(&[], &[]).unwrap(), "0");
     }
 
     #[test]

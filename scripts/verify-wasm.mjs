@@ -35,7 +35,8 @@ await wasm.default({
   module_or_path: readFileSync(join(wasmDir, 'atom_engine_wasm_bg.wasm')),
 })
 
-for (const fn of ['add', 'sub', 'mul', 'div', 'rem', 'pow', 'sqrt', 'cmp']) {
+for (const fn of ['add', 'sub', 'mul', 'div', 'rem', 'pow', 'sqrt', 'cmp',
+  'sum', 'dot', 'runBulk']) {
   if (typeof wasm[fn] !== 'function') {
     throw new Error(`[atom:wasm] invalid exports: missing ${fn}()`)
   }
@@ -47,6 +48,24 @@ if (wasm.add('1.2', '3.4') !== '4.6') {
 if (wasm.pow('2', -2, 18) !== '0.25') {
   throw new Error('[atom:wasm] pow smoke test failed')
 }
+// The bulk VM, exercised rather than merely exported: a browser build that
+// carries the opcode table but computes something else is the failure this
+// gate exists to catch. Quantities 1.50 and 2.25 against prices 10.00 and
+// 4.00 — the same program as the engine's own dot-product test.
+{
+  const values = new BigInt64Array([150n, 225n, 1000n, 400n])
+  const program = new Int32Array([
+    0, 0, 0, 0, 2, 0, //  LOAD_C  c0 <- column 0, scale 2
+    0, 1, 1, 0, 2, 0, //  LOAD_C  c1 <- column 1, scale 2
+    23, 0, 0, 1, 0, 0, // DOT_CC  s0 <- c0 . c1
+    40, 0, 0, 0, 0, 0, // OUT_S   s0
+  ])
+  const [total] = wasm.runBulk(values, 2, program)
+  if (total !== '24') {
+    throw new Error(`[atom:wasm] runBulk smoke test failed: got ${total}, want 24`)
+  }
+}
+
 if (wasm.sqrt('2', 6) !== '1.414213') {
   throw new Error('[atom:wasm] sqrt smoke test failed')
 }

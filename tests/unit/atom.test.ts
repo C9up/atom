@@ -478,3 +478,86 @@ describe("atom > what an aggregate accepts as a value", () => {
 		);
 	});
 });
+
+describe("atom > batch arithmetic crosses the boundary once", () => {
+	/**
+	 * The batch entry points exist for the crossing, not the arithmetic, so
+	 * what has to be proven is that they changed nothing: same digits as the
+	 * fold, on both engines, including the empty and malformed cases.
+	 */
+	const VALUES = ["0.1", "0.2", "1.005", "-3", "2.70", "1e3"];
+
+	const folded = (values: string[]) =>
+		values.reduce((total, v) => total.plus(v), Decimal.zero()).toString();
+
+	it("sum equals folding plus, natively", () => {
+		expect(Decimal.sum(VALUES).toString()).toBe(folded(VALUES));
+	});
+
+	it("sum equals folding plus on the fallback too", () => {
+		__overrideNativeForTesting(null);
+		try {
+			expect(Decimal.sum(VALUES).toString()).toBe(folded(VALUES));
+		} finally {
+			__overrideNativeForTesting(undefined);
+		}
+	});
+
+	it("the two engines agree with each other", () => {
+		const native = Decimal.sum(VALUES).toString();
+		__overrideNativeForTesting(null);
+		try {
+			expect(Decimal.sum(VALUES).toString()).toBe(native);
+		} finally {
+			__overrideNativeForTesting(undefined);
+		}
+	});
+
+	it("an empty batch is zero, so a split sum still adds up", () => {
+		expect(Decimal.sum([]).toString()).toBe("0");
+		expect(Decimal.dot([], []).toString()).toBe("0");
+	});
+
+	it("sum keeps every digit it was given", () => {
+		expect(Decimal.sum(["1.00000001", "2"]).toString()).toBe("3.00000001");
+	});
+
+	it("dot equals multiplying pair by pair", () => {
+		const q = ["100", "2.5", "-3"];
+		const p = ["52.37", "1000.01", "7.5"];
+		const pairwise = q
+			.reduce(
+				(total, value, i) =>
+					total.plus(new Decimal(value).times(p[i] as string)),
+				Decimal.zero(),
+			)
+			.toString();
+		expect(Decimal.dot(q, p).toString()).toBe(pairwise);
+	});
+
+	it("dot agrees across engines", () => {
+		const q = ["100", "2.5", "-3"];
+		const p = ["52.37", "1000.01", "7.5"];
+		const native = Decimal.dot(q, p).toString();
+		__overrideNativeForTesting(null);
+		try {
+			expect(Decimal.dot(q, p).toString()).toBe(native);
+		} finally {
+			__overrideNativeForTesting(undefined);
+		}
+	});
+
+	it("dot refuses mismatched lengths instead of valuing part of a book", () => {
+		expect(() => Decimal.dot(["1", "2"], ["3"])).toThrow(/Mismatched/);
+	});
+
+	it("a malformed member is refused, not skipped", () => {
+		expect(() => Decimal.sum(["1", "not a number"])).toThrow();
+	});
+
+	it("Decimal instances and numbers go in as readily as strings", () => {
+		expect(Decimal.sum([new Decimal("1.5"), 2, "0.25"]).toString()).toBe(
+			"3.75",
+		);
+	});
+});

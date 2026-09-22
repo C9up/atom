@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 atom-engine = { path = "../atom-engine" }
-napi = { version = "3", features = ["serde-json"] }
+napi = { version = "3", features = ["serde-json", "napi6"] }  # napi6: BigInt64Array, the bulk transport
 napi-derive = { version = "3", features = ["type-def"] }
 
 [build-dependencies]

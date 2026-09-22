@@ -4,6 +4,8 @@
  * pure TypeScript BigInt fallback for unsupported platforms.
  */
 
+export type { BulkDivOptions, BulkStddevOptions } from "./bulk.js";
+export { Bulk, BulkColumn, BulkScalar, bulk } from "./bulk.js";
 export type { AtomContext, AtomContextOptions } from "./context.js";
 export {
 	configureAtomContext,
@@ -34,6 +36,7 @@ export type {
 export { Money, money } from "./Money.js";
 export { isNativeAvailable } from "./native.js";
 
+import { bulk as bulkFn } from "./bulk.js";
 import { defaultPrecision, defaultRoundMode } from "./context.js";
 import type { MedianOptions, StddevOptions } from "./Decimal.js";
 import { Decimal, type DecimalInput } from "./Decimal.js";
@@ -82,21 +85,28 @@ function resolveValues(args: readonly unknown[]): Iterable<DecimalInput> {
 	return args.map(toDecimalValue);
 }
 
+/**
+ * Exact sum — through the engine's BATCH entry point, not a fold.
+ *
+ * The result is identical either way; the cost is not. Every `plus` from
+ * JavaScript serialises both operands, crosses into the native engine and
+ * comes back with a string, and that crossing is where the time goes — around
+ * a microsecond an operation, against nanoseconds for the arithmetic itself.
+ * `Decimal.sum` hands the whole list over once, so summing a column of a
+ * hundred thousand figures costs one crossing rather than a hundred thousand.
+ *
+ * Nothing changed for callers: this is what `Atom.sum` always meant.
+ */
 function sumImpl(values: Iterable<DecimalInput>): Decimal {
-	let total = Decimal.zero();
-	for (const value of values) {
-		total = total.plus(value);
-	}
-	return total;
+	return Decimal.sum(values);
 }
 
 function avgImpl(values: Iterable<DecimalInput>): Decimal {
-	let total = Decimal.zero();
-	let count = 0;
-	for (const value of values) {
-		total = total.plus(value);
-		count++;
-	}
+	// Materialised so the count and the batch see the same values: an iterable
+	// consumed by one is not there for the other.
+	const list = [...values];
+	const total = Decimal.sum(list);
+	const count = list.length;
 	if (count === 0) {
 		throw new Error("Atom.avg requires at least one value");
 	}
@@ -183,11 +193,10 @@ function stddevImpl(
 		throw new Error("Atom.stddev sample mode requires at least two values");
 	}
 	const mean = avgImpl(list);
-	let sumSquares = Decimal.zero();
-	for (const value of list) {
-		const diff = value.minus(mean);
-		sumSquares = sumSquares.plus(diff.times(diff));
-	}
+	// `Σ diff²` is a dot product of the deviations with themselves: one
+	// crossing, where the fold made two per value — a multiply and an add.
+	const deviations = list.map((value) => value.minus(mean));
+	const sumSquares = Decimal.dot(deviations, deviations);
 	const variance = sumSquares.div(String(divisor), {
 		precision: precision + 8,
 	});
@@ -278,6 +287,15 @@ function stddevFn(
 export const Atom = {
 	/** Construct a `Decimal` from a string / number / bigint / Decimal. Alias for `Decimal.from`. */
 	decimal,
+	/**
+	 * Plan a computation and run it in one crossing.
+	 *
+	 * For chains of dependent operations — a schedule, a rate solver, a
+	 * statistic over a column — where the cost is the boundary rather than the
+	 * arithmetic. Not for a lone sum: below about three operations per element a
+	 * plain loop wins.
+	 */
+	bulk: bulkFn,
 	/** Exact sum of N values. Empty input → `Decimal('0')`. */
 	sum: sumFn,
 	/** Arithmetic mean of N values. Throws on empty input. */

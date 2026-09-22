@@ -29,7 +29,8 @@
     "build:wasm": "wasm-pack build --target web crates/atom-engine-wasm --out-dir ../../wasm && node scripts/clean-wasm-pack-meta.mjs",
     "lint": "biome check src/ tests/",
     "test:coverage": "vitest run --coverage",
-    "prepublishOnly": "tsc -p tsconfig.build.json && pnpm build:wasm && node scripts/verify-wasm.mjs"
+    "prepublishOnly": "tsc -p tsconfig.build.json && pnpm build:wasm && node scripts/verify-wasm.mjs",
+    "bench:bulk": "pnpm build && node scripts/bench-bulk.mjs"
   },
   "files": [
     "LICENSE",

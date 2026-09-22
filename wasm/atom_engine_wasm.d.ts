@@ -1,19 +1,86 @@
-// Hand-written stub for the wasm-pack-generated glue file. Lets `tsc --noEmit`
-// pass on a fresh checkout before `pnpm build:wasm` has been run. wasm-pack
-// will overwrite this file with its real generated declarations on the next
-// `build:wasm`; the runtime shape stays compatible.
-//
-// Story 52.1 review patch (2026-05-09): typecheck was broken on a fresh
-// checkout because src/native.ts:60 imports this glue file, and `tsc` could
-// not find it without first running `build:wasm`.
-
-export default function init(): Promise<unknown>;
+/* tslint:disable */
+/* eslint-disable */
 
 export function add(a: string, b: string): string;
-export function sub(a: string, b: string): string;
-export function mul(a: string, b: string): string;
-export function div(a: string, b: string, precision: number): string;
-export function rem(a: string, b: string): string;
-export function pow(a: string, exp: number, precision: number): string;
-export function sqrt(a: string, precision: number): string;
+
 export function cmp(a: string, b: string): number;
+
+export function div(a: string, b: string, precision: number): string;
+
+export function dot(a: string[], b: string[]): string;
+
+export function mul(a: string, b: string): string;
+
+export function pow(a: string, exp: number, precision: number): string;
+
+export function rem(a: string, b: string): string;
+
+/**
+ * Run a bulk program over a resident column buffer.
+ *
+ * Held to the same shape as the N-API build so the two engines cannot quietly
+ * diverge — the browser has to export what Node does. `Vec<i64>` and `Vec<i32>`
+ * cross as `BigInt64Array` and `Int32Array`, which is what the compiler in
+ * TypeScript produces anyway.
+ */
+export function runBulk(values: BigInt64Array, rows: number, program: Int32Array): string[];
+
+export function sqrt(a: string, precision: number): string;
+
+export function sub(a: string, b: string): string;
+
+/**
+ * The batch pair, held to the same shape as the NAPI build so the two
+ * engines cannot quietly diverge — the browser has to export what Node does.
+ *
+ * `Vec<String>` crosses the wasm boundary as a JS array of strings, which is
+ * exactly what the facade holds anyway.
+ */
+export function sum(values: string[]): string;
+
+export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
+
+export interface InitOutput {
+    readonly memory: WebAssembly.Memory;
+    readonly add: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly cmp: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly div: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly dot: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly mul: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly pow: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly rem: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly runBulk: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly sqrt: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly sub: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly sum: (a: number, b: number) => [number, number, number, number];
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly __externref_table_dealloc: (a: number) => void;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __externref_table_alloc: () => number;
+    readonly __externref_drop_slice: (a: number, b: number) => void;
+    readonly __wbindgen_start: () => void;
+}
+
+export type SyncInitInput = BufferSource | WebAssembly.Module;
+
+/**
+ * Instantiates the given `module`, which can either be bytes or
+ * a precompiled `WebAssembly.Module`.
+ *
+ * @param {{ module: SyncInitInput }} module - Passing `SyncInitInput` directly is deprecated.
+ *
+ * @returns {InitOutput}
+ */
+export function initSync(module: { module: SyncInitInput } | SyncInitInput): InitOutput;
+
+/**
+ * If `module_or_path` is {RequestInfo} or {URL}, makes a request and
+ * for everything else, calls `WebAssembly.instantiate` directly.
+ *
+ * @param {{ module_or_path: InitInput | Promise<InitInput> }} module_or_path - Passing `InitInput` directly is deprecated.
+ *
+ * @returns {Promise<InitOutput>}
+ */
+export default function __wbg_init (module_or_path?: { module_or_path: InitInput | Promise<InitInput> } | InitInput | Promise<InitInput>): Promise<InitOutput>;

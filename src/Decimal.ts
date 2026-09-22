@@ -124,6 +124,64 @@ export class Decimal {
 		return value instanceof Decimal;
 	}
 
+	/**
+	 * Add a whole batch in ONE crossing of the native boundary.
+	 *
+	 * **This exists for the crossing, not for the arithmetic.** Parsing and
+	 * adding a decimal is cheap; doing it from JavaScript one pair at a time is
+	 * not, because every call serialises both operands to strings, crosses into
+	 * Rust and comes back with a third. Folding `plus` over a hundred thousand
+	 * values pays that toll a hundred thousand times for work the engine does
+	 * in one pass — measured at roughly a microsecond per operation, which is
+	 * where a multi-year portfolio rebuild spends almost all of its time.
+	 *
+	 * Exactly equal to folding {@link plus} over the same values, by
+	 * construction and by test: decimal addition is exact and associative, and
+	 * every value is raised to the common scale rather than rounded to it.
+	 *
+	 * An empty batch is zero — the additive identity, and the only answer that
+	 * keeps `sum(a) + sum(b) === sum([...a, ...b])` true when one side is
+	 * empty.
+	 */
+	static sum(values: Iterable<DecimalInput>): Decimal {
+		const parts = [...values].map(normalizeInput);
+		const native = tryNativeAtom();
+		if (native) return new Decimal(native.sum(parts));
+		// The fallback folds, because the TypeScript engine has no boundary to
+		// cross and therefore nothing to save by batching.
+		return new Decimal(parts.reduce((total, part) => addTs(total, part), "0"));
+	}
+
+	/**
+	 * The sum of pairwise products — `Σ aᵢ·bᵢ` — in one crossing.
+	 *
+	 * The shape of every valuation in this ecosystem: a quantity times a price,
+	 * added up. Two crossings per position become one for the whole book.
+	 *
+	 * Throws on mismatched lengths rather than stopping at the shorter list: a
+	 * quantity list and a price list of different lengths is a caller's bug,
+	 * and valuing the first n positions would return a plausible figure for a
+	 * portfolio nobody holds.
+	 */
+	static dot(a: Iterable<DecimalInput>, b: Iterable<DecimalInput>): Decimal {
+		const left = [...a].map(normalizeInput);
+		const right = [...b].map(normalizeInput);
+		if (left.length !== right.length) {
+			throw new Error(
+				`Mismatched batch lengths: ${left.length} and ${right.length}`,
+			);
+		}
+		const native = tryNativeAtom();
+		if (native) return new Decimal(native.dot(left, right));
+		return new Decimal(
+			left.reduce(
+				(total, value, index) =>
+					addTs(total, mulTs(value, right[index] as string)),
+				"0",
+			),
+		);
+	}
+
 	static zero(): Decimal {
 		return new Decimal("0");
 	}

@@ -1,3 +1,5 @@
+pub mod bulk;
+
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use std::panic::catch_unwind;
@@ -35,6 +37,22 @@ pub fn pow(a: String, exp: i32, precision: u32) -> Result<String> {
 #[napi]
 pub fn sqrt(a: String, precision: u32) -> Result<String> {
     wrap_string(|| atom_engine::sqrt(&a, precision))
+}
+
+/// Batch addition — one crossing for the whole list.
+///
+/// `Vec<String>` rather than a stream of calls, because the crossing IS the
+/// cost: parsing and formatting a decimal is cheap, and doing it once per
+/// pair from JavaScript is what makes a long fold expensive.
+#[napi]
+pub fn sum(values: Vec<String>) -> Result<String> {
+    wrap_string(move || atom_engine::sum(&values))
+}
+
+/// Batch `Σ aᵢ·bᵢ` — the shape of every valuation, in one crossing.
+#[napi]
+pub fn dot(a: Vec<String>, b: Vec<String>) -> Result<String> {
+    wrap_string(move || atom_engine::dot(&a, &b))
 }
 
 #[napi]
