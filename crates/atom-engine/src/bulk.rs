@@ -278,7 +278,12 @@ impl<'a> Machine<'a> {
         })
     }
 
-    fn step(&mut self, word: &[i32]) -> Outcome<()> {
+    /// One instruction.
+    ///
+    /// A fixed-size array rather than a slice: the six reads below are then
+    /// bounds-check-free, and this is the loop every bulk program runs once
+    /// per instruction.
+    fn step(&mut self, word: &[i32; INSTRUCTION_WIDTH]) -> Outcome<()> {
         // `imm1` is decoded but unused: the sixth slot is held open so a new
         // opcode can take a second immediate without changing the stride, and
         // with it every program already compiled.
@@ -644,7 +649,8 @@ pub fn run(values: &[i64], rows: usize, program: &[i32]) -> Outcome<Vec<String>>
         scalars: vec![Scalar::default(); SCALAR_REGISTERS],
         out: Vec::new(),
     };
-    for word in program.chunks_exact(INSTRUCTION_WIDTH) {
+    // `.0` alone: the length check above already rejected a remainder.
+    for word in program.as_chunks::<INSTRUCTION_WIDTH>().0 {
         machine.step(word)?;
     }
     Ok(machine.out)
