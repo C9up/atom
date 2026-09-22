@@ -10,3 +10,16 @@ members = [
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/C9up/atom"
+
+# Compilation pour la production.
+#
+# Le VM vit dans `atom-engine` et le binding dans `atom-engine-napi` : sans LTO,
+# rien ne s'inline entre les deux et chaque opcode passe par un appel de crate
+# à crate. `codegen-units = 1` laisse LLVM voir la boucle entière.
+#
+# Pas de `panic = "abort"` : napi-rs rattrape les panics pour les transformer en
+# exceptions JavaScript, et `abort` tuerait le processus de l'application.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
