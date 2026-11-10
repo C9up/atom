@@ -460,7 +460,9 @@ export class BulkColumn extends BulkValue {
 		// variance carries: both have to fit, as they do for `Atom.stddev`.
 		const precision = precisionOf(options);
 		const working = precisionOf({ precision: precision + 8 });
-		const mean = this.avg({ precision: working });
+		// Same definition as `Atom.stddev`: guard digits on the mean too, in
+		// the root's mode.
+		const mean = this.avg({ precision: working, mode: options.mode });
 		const squares = scalar(Op.SumSquaredDeviations, [
 			nodeOf(this),
 			nodeOf(mean),

@@ -192,17 +192,20 @@ function stddevImpl(
 	if (divisor <= 0) {
 		throw new Error("Atom.stddev sample mode requires at least two values");
 	}
-	const mean = avgImpl(list);
+	// The one definition `BulkColumn.stddev` shares: the mean and the variance
+	// carry eight guard digits past the precision asked for, the squared
+	// deviations are exact, and only the root comes back at `precision`. The
+	// mean used to be taken at the context's precision, so the last digits
+	// followed a setting the caller never passed. Every step rounds in the
+	// root's mode: a directed mode asked for at the end should not be undone
+	// by a different one inside.
+	const working = { precision: precision + 8, mode };
+	const mean = Decimal.sum(list).div(String(list.length), working);
 	// `Σ diff²` is a dot product of the deviations with themselves: one
 	// crossing, where the fold made two per value — a multiply and an add.
 	const deviations = list.map((value) => value.minus(mean));
 	const sumSquares = Decimal.dot(deviations, deviations);
-	// The variance is rounded in the same mode as the root: a directed mode
-	// asked for at the end should not be undone by a different one inside.
-	const variance = sumSquares.div(String(divisor), {
-		precision: precision + 8,
-		mode,
-	});
+	const variance = sumSquares.div(String(divisor), working);
 	return variance.sqrt({ precision, mode });
 }
 
