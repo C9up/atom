@@ -649,7 +649,10 @@ export class Bulk {
 			}
 			out[key] = new Decimal(value);
 		});
-		return out as { [K in keyof T]: Decimal };
+		if (!holdsEveryOutput(out, outputs)) {
+			throw new Error("[ATOM_BULK_LOST_OUTPUT] The run lost a value");
+		}
+		return out;
 	}
 
 	#execute(roots: readonly PlanNode[]): string[] {
@@ -670,6 +673,17 @@ export class Bulk {
 		}
 		return roots.map((root) => evaluateScalar(root, new Map()));
 	}
+}
+
+/**
+ * Whether `results` holds a `Decimal` under every key of `outputs` — checked
+ * rather than asserted, so the mapped return type of `run` is earned.
+ */
+function holdsEveryOutput<T extends object>(
+	results: Readonly<Record<string, Decimal>>,
+	outputs: T,
+): results is Readonly<Record<string, Decimal>> & { [K in keyof T]: Decimal } {
+	return Object.keys(outputs).every((key) => results[key] instanceof Decimal);
 }
 
 function isOverflow(error: unknown): boolean {

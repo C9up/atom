@@ -191,9 +191,10 @@ export class Decimal {
 		const native = tryNativeAtom();
 		if (native) return new Decimal(native.dot(left, right));
 		return new Decimal(
+			// The lengths were checked above, so every read lands.
 			left.reduce(
 				(total, value, index) =>
-					addTs(total, mulTs(value, right[index] as string)),
+					addTs(total, mulTs(value, right[index] ?? "0")),
 				"0",
 			),
 		);

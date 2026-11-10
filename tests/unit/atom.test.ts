@@ -355,7 +355,7 @@ describe("atom > toLocale precision (audit fix)", () => {
 describe("atom > round mode guard (audit fix)", () => {
 	it("toScale rejects an unknown rounding mode", () => {
 		const d = new Decimal("1.5");
-		expect(() => d.toScale(0, "nuke" as never)).toThrow(
+		expect(() => Reflect.apply(d.toScale, d, [0, "nuke"])).toThrow(
 			/Unknown rounding mode/,
 		);
 	});
@@ -488,10 +488,15 @@ describe("atom > what an aggregate accepts as a value", () => {
 		// reached `new Decimal(...)` and came back as
 		// `input.trim is not a function` — an error naming neither the value nor
 		// the call it came from.
-		expect(() => Atom.sum("1", { precision: 2 } as never)).toThrow(
+		// Called through Reflect: these are the calls the types forbid.
+		expect(() =>
+			Reflect.apply(Atom.sum, undefined, ["1", { precision: 2 }]),
+		).toThrow(
 			/Atom aggregates take a string, number, bigint or Decimal, got object/,
 		);
-		expect(() => Atom.min("1", null as never)).toThrow(/got null/);
+		expect(() => Reflect.apply(Atom.min, undefined, ["1", null])).toThrow(
+			/got null/,
+		);
 	});
 
 	it("still takes the two shapes it documents", () => {
@@ -551,11 +556,11 @@ describe("atom > batch arithmetic crosses the boundary once", () => {
 		const q = ["100", "2.5", "-3"];
 		const p = ["52.37", "1000.01", "7.5"];
 		const pairwise = q
-			.reduce(
-				(total, value, i) =>
-					total.plus(new Decimal(value).times(p[i] as string)),
-				Decimal.zero(),
-			)
+			.reduce((total, value, i) => {
+				const price = p[i];
+				if (price === undefined) throw new Error(`no price at ${i}`);
+				return total.plus(new Decimal(value).times(price));
+			}, Decimal.zero())
 			.toString();
 		expect(Decimal.dot(q, p).toString()).toBe(pairwise);
 	});
