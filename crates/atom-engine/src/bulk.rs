@@ -143,18 +143,31 @@ fn align(a: Scalar, b: Scalar) -> Outcome<(i128, i128, u32)> {
     Ok((lift(a)?, lift(b)?, scale))
 }
 
+/// The sum of two scales, or an overflow when it does not fit.
+fn add_scales(a: u32, b: u32) -> Outcome<u32> {
+    a.checked_add(b).ok_or(BulkError::Overflow("a scale"))
+}
+
 /// Integer square root by Newton's method, truncated toward zero.
+///
+/// Worked in `u128`: starting the iteration from `value` itself, the first
+/// `guess + value / guess` is `value + 1`, which exceeds `i128::MAX` for the
+/// widest input.
 fn isqrt(value: i128) -> i128 {
-    if value <= 0 {
+    let Ok(value) = u128::try_from(value) else {
         return 0;
+    };
+    if value < 2 {
+        return value as i128;
     }
     let mut guess = value;
-    let mut next = (guess + 1) / 2;
+    let mut next = (guess + value / guess) / 2;
     while next < guess {
         guess = next;
         next = (guess + value / guess) / 2;
     }
-    guess
+    // The root of anything below 2^127 is below 2^64.
+    guess as i128
 }
 
 struct Machine<'a> {
@@ -264,16 +277,20 @@ impl<'a> Machine<'a> {
         //   = (a * 10^(precision + sb)) / (b * 10^sa)
         let numerator = a
             .value
-            .checked_mul(ten_pow(precision + b.scale)?)
+            .checked_mul(ten_pow(add_scales(precision, b.scale)?)?)
             .ok_or(BulkError::Overflow("a division numerator"))?;
         let denominator = b
             .value
             .checked_mul(ten_pow(a.scale)?)
             .ok_or(BulkError::Overflow("a division denominator"))?;
+        // i128 division truncates toward zero, which is the contract the
+        // scalar engine already follows. `i128::MIN / -1` is the one quotient
+        // that does not fit.
+        let value = numerator
+            .checked_div(denominator)
+            .ok_or(BulkError::Overflow("a quotient"))?;
         Ok(Scalar {
-            // i128 division truncates toward zero, which is the contract the
-            // scalar engine already follows.
-            value: numerator / denominator,
+            value,
             scale: precision,
         })
     }
@@ -296,9 +313,12 @@ impl<'a> Machine<'a> {
                 let offset = (a as usize)
                     .checked_mul(self.rows)
                     .ok_or_else(|| BulkError::BadProgram("column offset overflow".to_string()))?;
+                let end = offset
+                    .checked_add(self.rows)
+                    .ok_or_else(|| BulkError::BadProgram("column offset overflow".to_string()))?;
                 let slice = self
                     .values
-                    .get(offset..offset + self.rows)
+                    .get(offset..end)
                     .ok_or_else(|| BulkError::BadProgram("column out of bounds".to_string()))?;
                 self.put_column(
                     dst,
@@ -342,7 +362,7 @@ impl<'a> Machine<'a> {
                         right.values.len()
                     )));
                 }
-                let scale = left.scale + right.scale;
+                let scale = add_scales(left.scale, right.scale)?;
                 let mut values = Vec::with_capacity(left.values.len());
                 for (x, y) in left.values.iter().zip(right.values.iter()) {
                     values.push(
@@ -363,7 +383,7 @@ impl<'a> Machine<'a> {
             MUL_CS => {
                 let column = self.column(a)?;
                 let scalar = self.scalar(b)?;
-                let scale = column.scale + scalar.scale;
+                let scale = add_scales(column.scale, scalar.scale)?;
                 let mut values = Vec::with_capacity(column.values.len());
                 for x in &column.values {
                     values.push(
@@ -376,7 +396,11 @@ impl<'a> Machine<'a> {
             NEG_C => {
                 let source = self.column(a)?;
                 let column = Column {
-                    values: source.values.iter().map(|v| -v).collect(),
+                    values: source
+                        .values
+                        .iter()
+                        .map(|v| v.checked_neg().ok_or(BulkError::Overflow("a negation")))
+                        .collect::<Outcome<Vec<i128>>>()?,
                     scale: source.scale,
                 };
                 self.put_column(dst, column)
@@ -384,7 +408,14 @@ impl<'a> Machine<'a> {
             ABS_C => {
                 let source = self.column(a)?;
                 let column = Column {
-                    values: source.values.iter().map(|v| v.abs()).collect(),
+                    values: source
+                        .values
+                        .iter()
+                        .map(|v| {
+                            v.checked_abs()
+                                .ok_or(BulkError::Overflow("an absolute value"))
+                        })
+                        .collect::<Outcome<Vec<i128>>>()?,
                     scale: source.scale,
                 };
                 self.put_column(dst, column)
@@ -455,7 +486,7 @@ impl<'a> Machine<'a> {
                         .checked_add(product)
                         .ok_or(BulkError::Overflow("a dot product"))?;
                 }
-                let scale = left.scale + right.scale;
+                let scale = add_scales(left.scale, right.scale)?;
                 self.put_scalar(
                     dst,
                     Scalar {
@@ -493,7 +524,7 @@ impl<'a> Machine<'a> {
                     dst,
                     Scalar {
                         value: total,
-                        scale: scale * 2,
+                        scale: add_scales(scale, scale)?,
                     },
                 )
             }
@@ -527,13 +558,8 @@ impl<'a> Machine<'a> {
                     .value
                     .checked_mul(right.value)
                     .ok_or(BulkError::Overflow("a scalar product"))?;
-                self.put_scalar(
-                    dst,
-                    Scalar {
-                        value,
-                        scale: left.scale + right.scale,
-                    },
-                )
+                let scale = add_scales(left.scale, right.scale)?;
+                self.put_scalar(dst, Scalar { value, scale })
             }
             DIV_SS => {
                 let quotient = self.divide(self.scalar(a)?, self.scalar(b)?, imm0 as u32)?;
@@ -541,20 +567,28 @@ impl<'a> Machine<'a> {
             }
             NEG_S => {
                 let s = self.scalar(a)?;
+                let value = s
+                    .value
+                    .checked_neg()
+                    .ok_or(BulkError::Overflow("a negation"))?;
                 self.put_scalar(
                     dst,
                     Scalar {
-                        value: -s.value,
+                        value,
                         scale: s.scale,
                     },
                 )
             }
             ABS_S => {
                 let s = self.scalar(a)?;
+                let value = s
+                    .value
+                    .checked_abs()
+                    .ok_or(BulkError::Overflow("an absolute value"))?;
                 self.put_scalar(
                     dst,
                     Scalar {
-                        value: s.value.abs(),
+                        value,
                         scale: s.scale,
                     },
                 )
@@ -599,7 +633,7 @@ impl<'a> Machine<'a> {
                 }
                 let precision = imm0 as u32;
                 // isqrt(v * 10^(2p − s)) gives ⌊√(v·10^-s) · 10^p⌋.
-                let shift = 2 * precision;
+                let shift = add_scales(precision, precision)?;
                 if shift < source.scale {
                     return Err(BulkError::BadProgram(
                         "square root precision below half the operand scale".to_string(),
@@ -825,6 +859,139 @@ mod tests {
         .unwrap_err();
         assert_eq!(error, BulkError::DivisionByZero);
         assert!(!error.is_recoverable());
+    }
+
+    /// Builds i128::MIN from i64 literals only: (-2^63)² = 2^126, negated and
+    /// doubled. Register 3 holds it, register 1 holds 2^126.
+    const MIN_PROLOGUE: [[i32; INSTRUCTION_WIDTH]; 4] = [
+        [LOAD_S, 0, 0, 0, 0, 0],
+        [MUL_SS, 1, 0, 0, 0, 0],
+        [NEG_S, 2, 1, 0, 0, 0],
+        [ADD_SS, 3, 2, 2, 0, 0],
+    ];
+
+    fn run_on_min(tail: &[[i32; INSTRUCTION_WIDTH]]) -> Outcome<Vec<String>> {
+        let mut words = MIN_PROLOGUE.to_vec();
+        words.extend_from_slice(tail);
+        run(&[i64::MIN, -1], 1, &program(&words))
+    }
+
+    #[test]
+    fn negating_the_narrowest_value_overflows_instead_of_wrapping() {
+        let error = run_on_min(&[[NEG_S, 4, 3, 0, 0, 0], [OUT_S, 0, 4, 0, 0, 0]]).unwrap_err();
+        assert!(error.is_recoverable(), "{error:?}");
+    }
+
+    #[test]
+    fn the_absolute_value_of_the_narrowest_value_overflows_instead_of_wrapping() {
+        let error = run_on_min(&[[ABS_S, 4, 3, 0, 0, 0], [OUT_S, 0, 4, 0, 0, 0]]).unwrap_err();
+        assert!(error.is_recoverable(), "{error:?}");
+    }
+
+    #[test]
+    fn column_negation_and_absolute_value_overflow_instead_of_wrapping() {
+        // [-2^63] * -2^63 = [2^126], then 2^126 subtracted three times.
+        for op in [NEG_C, ABS_C] {
+            let error = run(
+                &[i64::MIN, i64::MIN],
+                1,
+                &program(&[
+                    [LOAD_C, 0, 0, 0, 0, 0],
+                    [LOAD_S, 0, 1, 0, 0, 0],
+                    [MUL_SS, 1, 0, 0, 0, 0],
+                    [MUL_CS, 1, 0, 0, 0, 0],
+                    [SUB_CS, 2, 1, 1, 0, 0],
+                    [SUB_CS, 3, 2, 1, 0, 0],
+                    [SUB_CS, 4, 3, 1, 0, 0],
+                    [op, 5, 4, 0, 0, 0],
+                    [SUM_C, 2, 5, 0, 0, 0],
+                    [OUT_S, 0, 2, 0, 0, 0],
+                ]),
+            )
+            .unwrap_err();
+            assert!(error.is_recoverable(), "opcode {op}: {error:?}");
+        }
+    }
+
+    #[test]
+    fn dividing_the_narrowest_value_by_minus_one_overflows_instead_of_panicking() {
+        let error = run_on_min(&[
+            [LOAD_S, 4, 1, 0, 0, 0],
+            [DIV_SS, 5, 3, 4, 0, 0],
+            [OUT_S, 0, 5, 0, 0, 0],
+        ])
+        .unwrap_err();
+        assert!(error.is_recoverable(), "{error:?}");
+    }
+
+    #[test]
+    fn the_square_root_of_the_widest_value_is_exact() {
+        // 2^126 + (2^126 - 1) = 2^127 - 1 = i128::MAX
+        let out = run(
+            &[i64::MIN, 1],
+            1,
+            &program(&[
+                [LOAD_S, 0, 0, 0, 0, 0],
+                [LOAD_S, 1, 1, 0, 0, 0],
+                [MUL_SS, 2, 0, 0, 0, 0],
+                [SUB_SS, 3, 2, 1, 0, 0],
+                [ADD_SS, 4, 2, 3, 0, 0],
+                [SQRT_S, 5, 4, 0, 0, 0],
+                [OUT_S, 0, 5, 0, 0, 0],
+            ]),
+        )
+        .unwrap();
+        assert_eq!(out, vec!["13043817825332782212".to_string()]);
+    }
+
+    #[test]
+    fn isqrt_is_exact_across_the_whole_range() {
+        for value in [
+            0i128,
+            1,
+            2,
+            3,
+            4,
+            15,
+            16,
+            17,
+            i64::MAX as i128,
+            i128::MAX - 1,
+            i128::MAX,
+        ] {
+            let root = isqrt(value);
+            assert!(root * root <= value, "{value}");
+            let next = root + 1;
+            assert!(
+                next.checked_mul(next).is_none_or(|square| square > value),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn scales_that_would_overflow_are_reported_rather_than_wrapped() {
+        // Two loads at the largest scale an i32 immediate can carry: their
+        // product's scale does not fit u32.
+        let error = run(
+            &[1, 1],
+            1,
+            &program(&[
+                [LOAD_S, 0, 0, 0, i32::MAX, 0],
+                [LOAD_S, 1, 1, 0, i32::MAX, 0],
+                [MUL_SS, 2, 0, 1, 0, 0],
+                [MUL_SS, 3, 2, 2, 0, 0],
+                [OUT_S, 0, 3, 0, 0, 0],
+            ]),
+        )
+        .unwrap_err();
+        assert!(error.is_recoverable(), "{error:?}");
+    }
+
+    #[test]
+    fn a_column_reaching_past_the_end_of_the_buffer_is_refused() {
+        let error = run(&[1], usize::MAX, &program(&[[LOAD_C, 0, 1, 0, 0, 0]])).unwrap_err();
+        assert!(matches!(error, BulkError::BadProgram(_)), "{error:?}");
     }
 
     #[test]

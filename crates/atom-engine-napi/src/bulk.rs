@@ -9,6 +9,7 @@
 use atom_engine::bulk;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 /// Run a bulk program over a resident column buffer.
 ///
@@ -22,12 +23,48 @@ use napi_derive::napi;
 /// allowed to be too narrow, never to be wrong.
 #[napi]
 pub fn run_bulk(values: BigInt64Array, rows: u32, program: Int32Array) -> Result<Vec<String>> {
-    bulk::run(&values, rows as usize, &program).map_err(|error| {
-        let message = error.message();
-        Error::from_reason(if error.is_recoverable() {
-            format!("[ATOM_BULK_OVERFLOW] {message}")
-        } else {
-            message
-        })
-    })
+    guarded(|| bulk::run(&values, rows as usize, &program))
+}
+
+/// A panic becomes a thrown error here: a plain `#[napi]` function does not
+/// catch one, and unwinding into the N-API frame aborts the whole process.
+fn guarded<F>(run: F) -> Result<Vec<String>>
+where
+    F: FnOnce() -> std::result::Result<Vec<String>, bulk::BulkError>,
+{
+    match catch_unwind(AssertUnwindSafe(run)) {
+        Ok(Ok(out)) => Ok(out),
+        Ok(Err(error)) => {
+            let message = error.message();
+            Err(Error::from_reason(if error.is_recoverable() {
+                format!("[ATOM_BULK_OVERFLOW] {message}")
+            } else {
+                message
+            }))
+        }
+        Err(_) => Err(Error::from_reason(
+            "[ATOM_BULK_PANIC] Internal panic in the bulk engine",
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_panic_becomes_an_error_instead_of_unwinding_into_node() {
+        let error = guarded(|| panic!("forced")).unwrap_err();
+        assert!(error.reason.contains("ATOM_BULK_PANIC"), "{}", error.reason);
+    }
+
+    #[test]
+    fn an_overflow_keeps_the_marker_the_caller_retries_on() {
+        let error = guarded(|| Err(bulk::BulkError::Overflow("a test"))).unwrap_err();
+        assert!(
+            error.reason.starts_with("[ATOM_BULK_OVERFLOW]"),
+            "{}",
+            error.reason
+        );
+    }
 }

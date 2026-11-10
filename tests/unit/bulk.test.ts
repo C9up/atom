@@ -551,3 +551,59 @@ describe("Atom.bulk — columns already held as minor units", () => {
 		expect(() => plan.column(["1", "2"])).toThrow(/ATOM_BULK_LENGTH_MISMATCH/);
 	});
 });
+
+describe("Atom.bulk — the edges of the 128-bit width", () => {
+	const I64_MIN = "-9223372036854775808";
+	const TWO_POW_127 = (2n ** 127n).toString();
+
+	/** i128::MIN, built from i64 literals only: -(2^63)² - (2^63)². */
+	function narrowest(b: Bulk): BulkScalar {
+		const x = b.of(I64_MIN);
+		const square = x.times(x);
+		return square.neg().plus(square.neg());
+	}
+
+	it("negates the narrowest 128-bit value instead of wrapping it", () => {
+		const { out } = agree((b) => ({ out: narrowest(b).neg() }));
+		expect(out.toString()).toBe(TWO_POW_127);
+	});
+
+	it("takes the absolute value of the narrowest 128-bit value", () => {
+		const { out } = agree((b) => ({ out: narrowest(b).abs() }));
+		expect(out.toString()).toBe(TWO_POW_127);
+	});
+
+	it("negates and takes absolute values of a column holding it", () => {
+		const { negated, absolute } = agree((b) => {
+			const x = b.of(I64_MIN);
+			const square = x.times(x);
+			const column = b
+				.column([I64_MIN])
+				.times(x)
+				.minus(square)
+				.minus(square)
+				.minus(square);
+			return { negated: column.neg().sum(), absolute: column.abs().sum() };
+		});
+		expect(negated.toString()).toBe(TWO_POW_127);
+		expect(absolute.toString()).toBe(TWO_POW_127);
+	});
+
+	it("divides the narrowest 128-bit value by minus one", () => {
+		const { out } = agree((b) => ({
+			out: narrowest(b).div(b.of("-1"), { precision: 0 }),
+		}));
+		expect(out.toString()).toBe(TWO_POW_127);
+	});
+
+	it("takes the square root of the widest 128-bit value exactly", () => {
+		const { out } = agree((b) => {
+			const x = b.of(I64_MIN);
+			const square = x.times(x);
+			return {
+				out: square.plus(square.minus(b.of("1"))).sqrt({ precision: 0 }),
+			};
+		});
+		expect(out.toString()).toBe("13043817825332782212");
+	});
+});
