@@ -12,6 +12,7 @@ import {
 	money,
 	stddev,
 	sum,
+	withAtomContext,
 } from "../../src/index.js";
 
 describe("Atom", () => {
@@ -191,6 +192,26 @@ describe("Atom", () => {
 		expect(new Decimal("12").toFixed(2)).toBe("12.00");
 		expect(new Decimal("12.3").toFixed(2)).toBe("12.30");
 		expect(new Decimal("12.345").toFixed(2, "half-up")).toBe("12.35");
+	});
+
+	it("rounds half-up by default in toFixed, round and toScale, like big.js", () => {
+		expect(new Decimal("1.999").toFixed(2)).toBe("2.00");
+		expect(new Decimal("-1.995").toFixed(2)).toBe("-2.00");
+		expect(new Decimal("1.994").toFixed(2)).toBe("1.99");
+		expect(new Decimal("1.999").round(2).toString()).toBe("2");
+		expect(new Decimal("1.999").toScale(2).toString()).toBe("2");
+		expect(new Decimal("1.999").toFixed(2, "trunc")).toBe("1.99");
+	});
+
+	it("takes the default rounding of toFixed, round and toScale from the context", () => {
+		withAtomContext({ roundMode: "trunc" }, () => {
+			expect(new Decimal("1.999").toFixed(2)).toBe("1.99");
+			expect(new Decimal("1.999").round(2).toString()).toBe("1.99");
+			expect(new Decimal("1.999").toScale(2).toString()).toBe("1.99");
+		});
+		withAtomContext({ roundMode: "ceil" }, () => {
+			expect(new Decimal("1.001").toFixed(2)).toBe("1.01");
+		});
 	});
 
 	it("supports minor units conversion", () => {

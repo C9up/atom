@@ -402,7 +402,8 @@ export class Decimal {
 		return this.toScale(scale, "ceil");
 	}
 
-	round(scale = 0, mode: RoundMode = "half-up"): Decimal {
+	/** {@link toScale}, under the name big.js gives it. */
+	round(scale = 0, mode?: RoundMode): Decimal {
 		return this.toScale(scale, mode);
 	}
 
@@ -432,19 +433,32 @@ export class Decimal {
 		return units.times(stepValue);
 	}
 
-	toScale(scale = 0, mode: RoundMode = "trunc"): Decimal {
+	/**
+	 * The value at `scale` digits, rounded in `mode` — the context's
+	 * `roundMode` when omitted, `half-up` unless configured otherwise, as
+	 * big.js rounds with `Big.RM`. `trunc`, `floor` and `ceil` name the
+	 * directed modes.
+	 */
+	toScale(scale = 0, mode?: RoundMode): Decimal {
 		assertScale(scale);
+		const rounding = assertRoundMode(mode ?? defaultRoundMode());
 		const parsed = parseDecimal(this.#value);
 		return fromIntScale(
-			roundIntScale(parsed.int, parsed.scale, scale, mode),
+			roundIntScale(parsed.int, parsed.scale, scale, rounding),
 			scale,
 		);
 	}
 
-	toFixed(scale: number, mode: RoundMode = "trunc"): string {
+	/**
+	 * The value as text with exactly `scale` fractional digits, rounded as
+	 * {@link toScale} rounds — half-up by default, like big.js, decimal.js and
+	 * `Number.prototype.toFixed`, so `1.999` prints `2.00`.
+	 */
+	toFixed(scale: number, mode?: RoundMode): string {
 		assertScale(scale);
+		const rounding = assertRoundMode(mode ?? defaultRoundMode());
 		const parsed = parseDecimal(this.#value);
-		const roundedInt = roundIntScale(parsed.int, parsed.scale, scale, mode);
+		const roundedInt = roundIntScale(parsed.int, parsed.scale, scale, rounding);
 		const negative = roundedInt < 0n;
 		const raw = (negative ? -roundedInt : roundedInt)
 			.toString()
