@@ -666,3 +666,31 @@ describe("Atom.bulk — the immediates a plan carries", () => {
 		expect(performance.now() - started).toBeLessThan(1_000);
 	});
 });
+
+describe("Atom.bulk — square roots below half the operand scale", () => {
+	it("takes a root at fewer digits than half the operand carries", () => {
+		const { root, whole } = agree((b) => ({
+			root: b.of("2.123").sqrt({ precision: 1 }),
+			whole: b.of("2.123").sqrt({ precision: 0 }),
+		}));
+		expect(root.toString()).toBe("1.4");
+		expect(whole.toString()).toBe("1");
+		expect(root.toString()).toBe(
+			new Decimal("2.123").sqrt({ precision: 1 }).toString(),
+		);
+	});
+
+	it("takes a standard deviation at every precision below its working digits", () => {
+		const values = ["1", "2", "4", "7.25", "-3.5"];
+		for (let precision = 0; precision <= 8; precision += 1) {
+			for (const sample of [false, true]) {
+				const { spread } = agree((b) => ({
+					spread: b.column(values).stddev({ precision, sample }),
+				}));
+				expect(`${precision}/${sample}=${spread.toString()}`).toBe(
+					`${precision}/${sample}=${stddev(values, { precision, sample }).toString()}`,
+				);
+			}
+		}
+	});
+});

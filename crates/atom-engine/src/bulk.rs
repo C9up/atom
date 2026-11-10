@@ -675,18 +675,20 @@ impl<'a> Machine<'a> {
                     ));
                 }
                 let precision = precision_of(imm0)?;
-                // isqrt(v * 10^(2p − s)) gives ⌊√(v·10^-s) · 10^p⌋. Both
+                // ⌊√(v·10^-s) · 10^p⌋ = isqrt(v · 10^(2p − s)). Below half the
+                // operand's scale the radicand is divided instead, flooring it
+                // as engine::sqrt does — ⌊√⌊x⌋⌋ = ⌊√x⌋, so nothing is lost. Both
                 // terms are at most MAX_SCALE, so the sum cannot overflow.
                 let shift = precision + precision;
-                if shift < source.scale {
-                    return Err(BulkError::BadProgram(
-                        "square root precision below half the operand scale".to_string(),
-                    ));
-                }
-                let lifted = source
-                    .value
-                    .checked_mul(ten_pow(shift - source.scale)?)
-                    .ok_or(BulkError::Overflow("a square root operand"))?;
+                let lifted = if shift >= source.scale {
+                    source
+                        .value
+                        .checked_mul(ten_pow(shift - source.scale)?)
+                        .ok_or(BulkError::Overflow("a square root operand"))?
+                } else {
+                    // A divisor past 10^38 leaves nothing of an i128.
+                    ten_pow(source.scale - shift).map_or(0, |divisor| source.value / divisor)
+                };
                 self.put_scalar(
                     dst,
                     Scalar {
@@ -1116,6 +1118,31 @@ mod tests {
             .unwrap_err();
             assert!(matches!(error, BulkError::BadProgram(_)), "{op}: {error:?}");
         }
+    }
+
+    #[test]
+    fn a_square_root_below_half_the_operand_scale_truncates_the_radicand() {
+        // √2.123 at one digit: ⌊√(2123 / 10)⌋ = ⌊√212⌋ = 14, as engine::sqrt.
+        let out = run(
+            &[2123],
+            1,
+            &program(&[
+                [LOAD_S, 0, 0, 0, 3, 0],
+                [SQRT_S, 1, 0, 0, 1, 0],
+                [SQRT_S, 2, 0, 0, 0, 0],
+                [OUT_S, 0, 1, 0, 0, 0],
+                [OUT_S, 0, 2, 0, 0, 0],
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            vec![
+                crate::engine::sqrt("2.123", 1).unwrap(),
+                crate::engine::sqrt("2.123", 0).unwrap(),
+            ]
+        );
+        assert_eq!(out, vec!["1.4".to_string(), "1".to_string()]);
     }
 
     #[test]
