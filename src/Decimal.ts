@@ -1049,10 +1049,22 @@ function normalizeLocalized(input: string, shape: LocaleNumberShape): string {
 		throw new Error("Invalid localized decimal: empty string");
 	}
 
-	let normalized = toAsciiDigits(trimmed, shape.digits);
-	// `\s` already covers U+00A0 and U+202F, which is what the space-grouping
-	// locales separate with.
-	normalized = normalized.replace(/\s/g, "");
+	// Bidirectional marks are layout, not number: Intl writes one before the
+	// minus sign in Arabic, Persian, Hebrew and Urdu, as a literal of its own.
+	let normalized = toAsciiDigits(trimmed, shape.digits).replace(
+		/[\u061C\u200E\u200F]/g,
+		"",
+	);
+	// Whitespace inside the number is a group separator or a mistake. A locale
+	// that groups with a space (U+0020, U+00A0 or U+202F — the one Intl writes
+	// is rarely the one a keyboard types) has every kind brought to its own, so
+	// the group sizes are checked below like any other separator's. Deleting
+	// it instead accepted "1 23,45" as 123.45. Anywhere else it is refused.
+	if (/^\s$/u.test(shape.group)) {
+		normalized = normalized.replace(/\s/g, shape.group);
+	} else if (/\s/.test(normalized)) {
+		throw new Error(`Invalid localized decimal: ${input}`);
+	}
 	if (shape.minus !== "-") {
 		normalized = normalized.replace(
 			new RegExp(escapeRegExp(shape.minus), "g"),
