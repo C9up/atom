@@ -74,8 +74,10 @@ export type DecimalSafeParseResult =
 	| { success: true; value: Decimal }
 	| { success: false; error: Error };
 
-const MAX_SCALE = 10_000;
-const MAX_EXPONENT_ABS = 100_000;
+/** The most fractional digits a value, a precision or a scale may ask for. */
+export const MAX_SCALE = 10_000;
+/** The largest exponent, either sign, that {@link Decimal.pow} takes. */
+export const MAX_EXPONENT_ABS = 100_000;
 
 export class Decimal {
 	#value: string;

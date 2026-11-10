@@ -44,6 +44,12 @@ pub const INSTRUCTION_WIDTH: usize = 6;
 const COLUMN_REGISTERS: usize = 16;
 const SCALAR_REGISTERS: usize = 32;
 
+/// The largest scale a value may carry — `Decimal`'s own bound, kept in step
+/// with `MAX_SCALE` in `src/Decimal.ts`. A working scale past it is handed to
+/// the BigInt executor, which applies the same bound with its own message, and
+/// it keeps `format_decimal` from padding millions of zeros.
+const MAX_SCALE: u32 = 10_000;
+
 /// Why a bulk run stopped.
 ///
 /// [`BulkError::Overflow`] is the one the caller is expected to recover from,
@@ -143,9 +149,31 @@ fn align(a: Scalar, b: Scalar) -> Outcome<(i128, i128, u32)> {
     Ok((lift(a)?, lift(b)?, scale))
 }
 
-/// The sum of two scales, or an overflow when it does not fit.
+/// The sum of two scales, or an overflow when it passes [`MAX_SCALE`].
 fn add_scales(a: u32, b: u32) -> Outcome<u32> {
-    a.checked_add(b).ok_or(BulkError::Overflow("a scale"))
+    a.checked_add(b)
+        .filter(|scale| *scale <= MAX_SCALE)
+        .ok_or(BulkError::Overflow("a scale"))
+}
+
+/// A load's scale immediate. Negative is a compiler bug; past [`MAX_SCALE`]
+/// is the BigInt executor's to refuse.
+fn load_scale(imm0: i32) -> Outcome<u32> {
+    let scale =
+        u32::try_from(imm0).map_err(|_| BulkError::BadProgram(format!("negative scale {imm0}")))?;
+    if scale > MAX_SCALE {
+        return Err(BulkError::Overflow("a scale"));
+    }
+    Ok(scale)
+}
+
+/// A division or root's precision immediate, which the compiler validates
+/// against the same bound before emitting it.
+fn precision_of(imm0: i32) -> Outcome<u32> {
+    u32::try_from(imm0)
+        .ok()
+        .filter(|precision| *precision <= MAX_SCALE)
+        .ok_or_else(|| BulkError::BadProgram(format!("invalid precision {imm0}")))
 }
 
 /// Integer square root by Newton's method, truncated toward zero.
@@ -324,7 +352,7 @@ impl<'a> Machine<'a> {
                     dst,
                     Column {
                         values: slice.iter().map(|v| *v as i128).collect(),
-                        scale: imm0 as u32,
+                        scale: load_scale(imm0)?,
                     },
                 )
             }
@@ -338,7 +366,7 @@ impl<'a> Machine<'a> {
                     dst,
                     Scalar {
                         value: value as i128,
-                        scale: imm0 as u32,
+                        scale: load_scale(imm0)?,
                     },
                 )
             }
@@ -562,7 +590,8 @@ impl<'a> Machine<'a> {
                 self.put_scalar(dst, Scalar { value, scale })
             }
             DIV_SS => {
-                let quotient = self.divide(self.scalar(a)?, self.scalar(b)?, imm0 as u32)?;
+                let quotient =
+                    self.divide(self.scalar(a)?, self.scalar(b)?, precision_of(imm0)?)?;
                 self.put_scalar(dst, quotient)
             }
             NEG_S => {
@@ -606,22 +635,36 @@ impl<'a> Machine<'a> {
                 // Non-negative exponents only: scale accumulates exactly, so
                 // this stays lossless. A negative exponent is compiled as a
                 // division by the positive power.
-                if imm0 < 0 {
+                let Ok(exponent) = u32::try_from(imm0) else {
                     return Err(BulkError::BadProgram(
                         "negative exponent must be compiled as a division".to_string(),
                     ));
-                }
+                };
                 let base = self.scalar(a)?;
-                let mut value: i128 = 1;
-                for _ in 0..imm0 {
-                    value = value
-                        .checked_mul(base.value)
-                        .ok_or(BulkError::Overflow("a power"))?;
-                }
                 let scale = base
                     .scale
-                    .checked_mul(imm0 as u32)
+                    .checked_mul(exponent)
+                    .filter(|scale| *scale <= MAX_SCALE)
                     .ok_or(BulkError::Overflow("a power's scale"))?;
+                // Square-and-multiply, like `engine::pow`. The base is squared
+                // only while bits remain, so a power that fits never fails on
+                // a square it did not need.
+                let mut value: i128 = 1;
+                let mut square = base.value;
+                let mut remaining = exponent;
+                while remaining > 0 {
+                    if remaining & 1 == 1 {
+                        value = value
+                            .checked_mul(square)
+                            .ok_or(BulkError::Overflow("a power"))?;
+                    }
+                    remaining >>= 1;
+                    if remaining > 0 {
+                        square = square
+                            .checked_mul(square)
+                            .ok_or(BulkError::Overflow("a power"))?;
+                    }
+                }
                 self.put_scalar(dst, Scalar { value, scale })
             }
             SQRT_S => {
@@ -631,9 +674,10 @@ impl<'a> Machine<'a> {
                         "square root of a negative value".to_string(),
                     ));
                 }
-                let precision = imm0 as u32;
-                // isqrt(v * 10^(2p − s)) gives ⌊√(v·10^-s) · 10^p⌋.
-                let shift = add_scales(precision, precision)?;
+                let precision = precision_of(imm0)?;
+                // isqrt(v * 10^(2p − s)) gives ⌊√(v·10^-s) · 10^p⌋. Both
+                // terms are at most MAX_SCALE, so the sum cannot overflow.
+                let shift = precision + precision;
                 if shift < source.scale {
                     return Err(BulkError::BadProgram(
                         "square root precision below half the operand scale".to_string(),
@@ -992,6 +1036,86 @@ mod tests {
     fn a_column_reaching_past_the_end_of_the_buffer_is_refused() {
         let error = run(&[1], usize::MAX, &program(&[[LOAD_C, 0, 1, 0, 0, 0]])).unwrap_err();
         assert!(matches!(error, BulkError::BadProgram(_)), "{error:?}");
+    }
+
+    #[test]
+    fn a_power_takes_logarithmic_time_in_its_exponent() {
+        // A linear loop would take seconds here; square-and-multiply takes 31
+        // steps.
+        let out = run(
+            &[1, -1],
+            1,
+            &program(&[
+                [LOAD_S, 0, 0, 0, 0, 0],
+                [LOAD_S, 1, 1, 0, 0, 0],
+                [POW_S, 2, 0, 0, i32::MAX, 0],
+                [POW_S, 3, 1, 0, i32::MAX, 0],
+                [OUT_S, 0, 2, 0, 0, 0],
+                [OUT_S, 0, 3, 0, 0, 0],
+            ]),
+        )
+        .unwrap();
+        assert_eq!(out, vec!["1".to_string(), "-1".to_string()]);
+    }
+
+    #[test]
+    fn a_power_is_exact_when_only_the_last_square_would_overflow() {
+        // 3^79 fits i128, 3^128 does not: the base must not be squared past
+        // the exponent's top bit.
+        let out = run(
+            &[3],
+            1,
+            &program(&[
+                [LOAD_S, 0, 0, 0, 0, 0],
+                [POW_S, 1, 0, 0, 79, 0],
+                [OUT_S, 0, 1, 0, 0, 0],
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            vec!["49269609804781974438694403402127765867".to_string()]
+        );
+        let error = run(
+            &[3],
+            1,
+            &program(&[
+                [LOAD_S, 0, 0, 0, 0, 0],
+                [POW_S, 1, 0, 0, 81, 0],
+                [OUT_S, 0, 1, 0, 0, 0],
+            ]),
+        )
+        .unwrap_err();
+        assert!(error.is_recoverable(), "{error:?}");
+    }
+
+    #[test]
+    fn a_negative_precision_or_scale_is_refused_instead_of_cast() {
+        for words in [
+            [[LOAD_S, 0, 0, 0, -1, 0], [OUT_S, 0, 0, 0, 0, 0]],
+            [[LOAD_S, 0, 0, 0, 0, 0], [DIV_SS, 1, 0, 0, -1, 0]],
+            [[LOAD_S, 0, 0, 0, 0, 0], [SQRT_S, 1, 0, 0, -1, 0]],
+            [[LOAD_C, 0, 0, 0, -1, 0], [SUM_C, 0, 0, 0, 0, 0]],
+        ] {
+            let error = run(&[2], 1, &program(&words)).unwrap_err();
+            assert!(
+                matches!(error, BulkError::BadProgram(_)),
+                "{words:?}: {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_precision_past_the_decimal_bound_is_refused() {
+        for op in [DIV_SS, SQRT_S] {
+            let error = run(
+                &[2],
+                1,
+                &program(&[[LOAD_S, 0, 0, 0, 0, 0], [op, 1, 0, 0, 10_001, 0]]),
+            )
+            .unwrap_err();
+            assert!(matches!(error, BulkError::BadProgram(_)), "{op}: {error:?}");
+        }
     }
 
     #[test]

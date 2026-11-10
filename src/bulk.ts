@@ -25,7 +25,12 @@
  */
 
 import { defaultPrecision } from "./context.js";
-import { Decimal, type DecimalInput } from "./Decimal.js";
+import {
+	Decimal,
+	type DecimalInput,
+	MAX_EXPONENT_ABS,
+	MAX_SCALE,
+} from "./Decimal.js";
 import type { ParsedDecimal } from "./math.js";
 import {
 	addTs,
@@ -189,6 +194,25 @@ function column(
 	});
 }
 
+/**
+ * The precision a planned division or root runs at, held to {@link Decimal}'s
+ * own bound.
+ *
+ * Checked here, while the plan is written, because the value then travels as
+ * an `Int32Array` word: a fraction, a negative or anything past 2^31 would
+ * reach the engine wrapped or truncated, and the two executors would answer
+ * the same plan with different digits.
+ */
+function precisionOf(options: BulkDivOptions): number {
+	const precision = options.precision ?? defaultPrecision();
+	if (!Number.isInteger(precision) || precision < 0 || precision > MAX_SCALE) {
+		throw new Error(
+			`[ATOM_BULK_BAD_PRECISION] Expected a whole precision between 0 and ${MAX_SCALE}, got ${precision}`,
+		);
+	}
+	return precision;
+}
+
 /** Options accepted wherever a planned division happens. */
 export interface BulkDivOptions {
 	precision?: number;
@@ -221,7 +245,7 @@ export class BulkScalar extends BulkValue {
 		return scalar(
 			Op.DivScalars,
 			[nodeOf(this), nodeOf(other)],
-			options.precision ?? defaultPrecision(),
+			precisionOf(options),
 		);
 	}
 
@@ -249,26 +273,28 @@ export class BulkScalar extends BulkValue {
 	 * truncate-toward-zero contract as {@link div} at `precision` digits.
 	 */
 	pow(exp: number, options: BulkDivOptions = {}): BulkScalar {
-		if (!Number.isSafeInteger(exp)) {
-			throw new Error(`[ATOM_BULK_BAD_EXPONENT] Not a whole exponent: ${exp}`);
+		if (
+			!Number.isInteger(exp) ||
+			exp < -MAX_EXPONENT_ABS ||
+			exp > MAX_EXPONENT_ABS
+		) {
+			throw new Error(
+				`[ATOM_BULK_BAD_EXPONENT] Expected a whole exponent of at most ${MAX_EXPONENT_ABS} either way, got ${exp}`,
+			);
 		}
 		if (exp >= 0) {
 			return scalar(Op.PowScalar, [nodeOf(this)], exp);
 		}
 		// A negative exponent has to divide, so it is compiled as one: the
 		// engine's power opcode stays exact by refusing to round.
-		const precision = options.precision ?? defaultPrecision();
+		const precision = precisionOf(options);
 		return literalScalar("1").div(scalar(Op.PowScalar, [nodeOf(this)], -exp), {
 			precision,
 		});
 	}
 
 	sqrt(options: BulkDivOptions = {}): BulkScalar {
-		return scalar(
-			Op.SqrtScalar,
-			[nodeOf(this)],
-			options.precision ?? defaultPrecision(),
-		);
+		return scalar(Op.SqrtScalar, [nodeOf(this)], precisionOf(options));
 	}
 }
 
@@ -349,6 +375,9 @@ export class BulkColumn extends BulkValue {
 	}
 
 	median(options: BulkDivOptions = {}): BulkScalar {
+		// Checked even when an odd length never divides: a bad option is a bug
+		// whichever length the column happens to have today.
+		precisionOf(options);
 		const length = this.#length();
 		const sorted = this.sorted();
 		const middle = Math.floor(length / 2);
@@ -381,14 +410,17 @@ export class BulkColumn extends BulkValue {
 				"[ATOM_BULK_TOO_SHORT] A sample standard deviation needs at least two values",
 			);
 		}
-		const precision = options.precision ?? defaultPrecision();
-		const mean = this.avg({ precision: precision + 8 });
+		// Checked as given, then again with the eight working digits the
+		// variance carries: both have to fit, as they do for `Atom.stddev`.
+		const precision = precisionOf(options);
+		const working = precisionOf({ precision: precision + 8 });
+		const mean = this.avg({ precision: working });
 		const squares = scalar(Op.SumSquaredDeviations, [
 			nodeOf(this),
 			nodeOf(mean),
 		]);
 		const variance = squares.div(literalScalar(String(divisor)), {
-			precision: precision + 8,
+			precision: working,
 		});
 		return variance.sqrt({ precision });
 	}
@@ -491,8 +523,7 @@ export class Bulk {
 		values: Iterable<string | number | bigint>,
 		scale: number,
 	): BulkColumn {
-		// Mirrors Decimal's own bound, which is not exported.
-		if (!Number.isInteger(scale) || scale < 0 || scale > 10_000) {
+		if (!Number.isInteger(scale) || scale < 0 || scale > MAX_SCALE) {
 			throw new Error(`[ATOM_BULK_BAD_SCALE] Invalid scale: ${scale}`);
 		}
 		return this.#load(

@@ -607,3 +607,62 @@ describe("Atom.bulk — the edges of the 128-bit width", () => {
 		expect(out.toString()).toBe("13043817825332782212");
 	});
 });
+
+describe("Atom.bulk — the immediates a plan carries", () => {
+	const BAD_PRECISIONS = [
+		-1,
+		1.5,
+		2 ** 32 + 2,
+		10_001,
+		Number.NaN,
+		Number.POSITIVE_INFINITY,
+	];
+
+	it("refuses an exponent the scalar API refuses", () => {
+		const plan = new Bulk();
+		for (const exp of [2 ** 32 + 3, -(2 ** 32 + 3), 100_001, -100_001]) {
+			expect(() => plan.of("2").pow(exp)).toThrow(/ATOM_BULK_BAD_EXPONENT/);
+			expect(() => new Decimal("2").pow(exp)).toThrow(/Invalid exponent/);
+		}
+	});
+
+	it("refuses a precision the scalar API refuses, wherever one is taken", () => {
+		const plan = new Bulk();
+		const one = plan.of("1");
+		const column = plan.column(["1", "2", "4", "5"]);
+		for (const precision of BAD_PRECISIONS) {
+			const options = { precision };
+			expect(() => one.div(plan.of("3"), options)).toThrow(
+				/ATOM_BULK_BAD_PRECISION/,
+			);
+			expect(() => one.sqrt(options)).toThrow(/ATOM_BULK_BAD_PRECISION/);
+			expect(() => one.pow(-2, options)).toThrow(/ATOM_BULK_BAD_PRECISION/);
+			expect(() => column.avg(options)).toThrow(/ATOM_BULK_BAD_PRECISION/);
+			expect(() => column.median(options)).toThrow(/ATOM_BULK_BAD_PRECISION/);
+			expect(() => column.stddev(options)).toThrow(/ATOM_BULK_BAD_PRECISION/);
+			expect(() => new Decimal("1").div("3", options)).toThrow(/Invalid scale/);
+		}
+	});
+
+	it("refuses a deviation whose working precision would pass the bound", () => {
+		const plan = new Bulk();
+		const column = plan.column(["1", "2"]);
+		expect(() => column.stddev({ precision: 9_993 })).toThrow(
+			/ATOM_BULK_BAD_PRECISION/,
+		);
+		expect(() => stddev(["1", "2"], { precision: 9_993 })).toThrow(
+			/Invalid scale/,
+		);
+	});
+
+	it("raises one to the largest exponent allowed without a linear loop", () => {
+		const started = performance.now();
+		const { up, down } = agree((b) => ({
+			up: b.of("1").pow(100_000),
+			down: b.of("-1").pow(-100_000, { precision: 2 }),
+		}));
+		expect(up.toString()).toBe("1");
+		expect(down.toString()).toBe("1");
+		expect(performance.now() - started).toBeLessThan(1_000);
+	});
+});
