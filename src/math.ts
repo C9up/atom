@@ -1,18 +1,6 @@
-import { defaultMaxDigits } from "./context.js";
+import { defaultMaxDigits, isRoundMode } from "./context.js";
 
 export type RoundMode = "trunc" | "floor" | "ceil" | "half-up" | "half-even";
-
-const ROUND_MODES: readonly string[] = [
-	"trunc",
-	"floor",
-	"ceil",
-	"half-up",
-	"half-even",
-];
-
-export function isRoundMode(value: unknown): value is RoundMode {
-	return typeof value === "string" && ROUND_MODES.includes(value);
-}
 
 /**
  * Refuse a mode before it is used. Rounding only reads it when a remainder is
