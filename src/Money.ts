@@ -149,12 +149,18 @@ export class Money {
 		});
 	}
 
+	/**
+	 * Divided and rounded once, from the exact quotient, to the currency's
+	 * scale. Dividing at the context's precision first and rounding that to
+	 * cents was rounding twice: the cents then depended on a process-wide
+	 * setting, and a directed mode rounded a value already truncated.
+	 */
 	div(divisor: DecimalInput, options: MoneyRoundingOptions = {}): Money {
-		return new Money(this.#amount.div(divisor), this.#currency, {
-			scale: this.#scale,
-			exact: false,
-			mode: options.mode,
+		const quotient = this.#amount.div(divisor, {
+			precision: this.#scale,
+			mode: options.mode ?? defaultQuantizeMode(),
 		});
+		return new Money(quotient, this.#currency, { scale: this.#scale });
 	}
 
 	allocate(ratios: Array<string | number | bigint>): Money[] {
