@@ -126,7 +126,11 @@ describe("Atom", () => {
 	});
 
 	it("supports sqrt operation", () => {
-		expect(new Decimal("2").sqrt({ precision: 6 }).toString()).toBe("1.414213");
+		// Half-up by default, as big.js rounds a root.
+		expect(new Decimal("2").sqrt({ precision: 6 }).toString()).toBe("1.414214");
+		expect(
+			new Decimal("2").sqrt({ precision: 6, mode: "trunc" }).toString(),
+		).toBe("1.414213");
 		expect(
 			new Decimal("2").sqrt({ precision: 3, mode: "half-up" }).toString(),
 		).toBe("1.414");

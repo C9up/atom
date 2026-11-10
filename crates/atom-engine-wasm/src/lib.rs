@@ -16,8 +16,8 @@ pub fn mul(a: &str, b: &str) -> Result<String, JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn div(a: &str, b: &str, precision: u32) -> Result<String, JsValue> {
-    atom_engine::div(a, b, precision).map_err(|e| JsValue::from_str(&e))
+pub fn div(a: &str, b: &str, precision: u32, mode: &str) -> Result<String, JsValue> {
+    atom_engine::div(a, b, precision, mode).map_err(|e| JsValue::from_str(&e))
 }
 
 #[wasm_bindgen]
@@ -26,8 +26,8 @@ pub fn rem(a: &str, b: &str) -> Result<String, JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn pow(a: &str, exp: i32, precision: u32) -> Result<String, JsValue> {
-    atom_engine::pow(a, exp, precision).map_err(|e| JsValue::from_str(&e))
+pub fn pow(a: &str, exp: i32, precision: u32, mode: &str) -> Result<String, JsValue> {
+    atom_engine::pow(a, exp, precision, mode).map_err(|e| JsValue::from_str(&e))
 }
 
 #[wasm_bindgen]

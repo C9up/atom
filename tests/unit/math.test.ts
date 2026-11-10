@@ -84,13 +84,16 @@ describe("atom > math > arithmetic helpers", () => {
 		expect(mulTs("0.1", "0.2")).toBe("0.02"); // 0.02 exact, no float drift
 	});
 
-	it("divTs uses the requested precision and truncates toward zero", () => {
-		expect(divTs("1", "3", 6)).toBe("0.333333");
-		expect(divTs("10", "4", 2)).toBe("2.5");
+	it("divTs uses the requested precision and rounds in the requested mode", () => {
+		expect(divTs("1", "3", 6, "trunc")).toBe("0.333333");
+		expect(divTs("2", "3", 6, "trunc")).toBe("0.666666");
+		expect(divTs("2", "3", 6, "half-up")).toBe("0.666667");
+		expect(divTs("2", "-3", 6, "half-up")).toBe("-0.666667");
+		expect(divTs("10", "4", 2, "trunc")).toBe("2.5");
 	});
 
 	it("divTs throws on divide-by-zero", () => {
-		expect(() => divTs("1", "0", 4)).toThrow(/Division by zero/);
+		expect(() => divTs("1", "0", 4, "trunc")).toThrow(/Division by zero/);
 	});
 
 	it("cmpTs returns -1 / 0 / 1 with scale alignment", () => {
@@ -111,24 +114,24 @@ describe("atom > math > arithmetic helpers", () => {
 
 describe("atom > math > powTs", () => {
 	it("returns '1' for any exponent of 0", () => {
-		expect(powTs("17", 0, 4)).toBe("1");
+		expect(powTs("17", 0, 4, "trunc")).toBe("1");
 	});
 
 	it("computes positive integer exponents via square-and-multiply", () => {
-		expect(powTs("2", 10, 0)).toBe("1024");
-		expect(powTs("1.5", 2, 4)).toBe("2.25");
+		expect(powTs("2", 10, 0, "trunc")).toBe("1024");
+		expect(powTs("1.5", 2, 4, "trunc")).toBe("2.25");
 	});
 
 	it("inverts negative exponents through divTs(1, base^|exp|)", () => {
-		expect(powTs("2", -3, 4)).toBe("0.125");
+		expect(powTs("2", -3, 4, "trunc")).toBe("0.125");
 	});
 
 	it("throws on a non-integer exponent", () => {
-		expect(() => powTs("2", 1.5, 4)).toThrow(/Invalid exponent/);
+		expect(() => powTs("2", 1.5, 4, "trunc")).toThrow(/Invalid exponent/);
 	});
 
 	it("handles exponents larger than 32-bit bitwise operators", () => {
-		expect(powTs("1", 2 ** 33, 0)).toBe("1");
+		expect(powTs("1", 2 ** 33, 0, "trunc")).toBe("1");
 	});
 });
 

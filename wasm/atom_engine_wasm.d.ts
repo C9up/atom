@@ -5,13 +5,13 @@ export function add(a: string, b: string): string;
 
 export function cmp(a: string, b: string): number;
 
-export function div(a: string, b: string, precision: number): string;
+export function div(a: string, b: string, precision: number, mode: string): string;
 
 export function dot(a: string[], b: string[]): string;
 
 export function mul(a: string, b: string): string;
 
-export function pow(a: string, exp: number, precision: number): string;
+export function pow(a: string, exp: number, precision: number, mode: string): string;
 
 export function rem(a: string, b: string): string;
 

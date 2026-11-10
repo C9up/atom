@@ -24,24 +24,25 @@
  *   })
  */
 
-import { defaultPrecision } from "./context.js";
+import { defaultPrecision, defaultRoundMode } from "./context.js";
 import {
 	Decimal,
 	type DecimalInput,
 	MAX_EXPONENT_ABS,
 	MAX_SCALE,
 } from "./Decimal.js";
-import type { ParsedDecimal } from "./math.js";
+import type { ParsedDecimal, RoundMode } from "./math.js";
 import {
 	addTs,
 	assertIntegerDigits,
+	assertRoundMode,
 	cmpTs,
 	divTs,
 	formatDecimal,
 	mulTs,
 	parseDecimal,
 	powTs,
-	sqrtTs,
+	sqrtRoundedTs,
 	subTs,
 } from "./math.js";
 import { tryNativeAtom } from "./native.js";
@@ -97,6 +98,8 @@ interface PlanNode {
 	readonly code: number;
 	readonly inputs: readonly PlanNode[];
 	readonly imm0: number;
+	/** A division's or a root's rounding mode, numbered as {@link ROUND_MODES}. */
+	readonly imm1: number;
 	/**
 	 * Present only on loads: the values this node puts into the buffer, in the
 	 * one form both executors can start from.
@@ -169,12 +172,14 @@ function scalar(
 	code: number,
 	inputs: readonly PlanNode[],
 	imm0 = 0,
+	imm1 = 0,
 ): BulkScalar {
 	return new BulkScalar({
 		shape: "scalar",
 		code,
 		inputs,
 		imm0,
+		imm1,
 		stamp: 0,
 		slot: -1,
 	});
@@ -190,6 +195,7 @@ function column(
 		code,
 		inputs,
 		imm0,
+		imm1: 0,
 		stamp: 0,
 		slot: -1,
 	});
@@ -214,9 +220,41 @@ function precisionOf(options: BulkDivOptions): number {
 	return precision;
 }
 
-/** Options accepted wherever a planned division happens. */
+/**
+ * Rounding modes in the engine's numbering — `mode_of` in
+ * `crates/atom-engine/src/bulk.rs`.
+ */
+const ROUND_MODES: readonly RoundMode[] = [
+	"trunc",
+	"floor",
+	"ceil",
+	"half-up",
+	"half-even",
+];
+
+/** The mode a planned division or root rounds in, as its immediate. */
+function modeOf(options: BulkDivOptions): number {
+	const mode = assertRoundMode(options.mode ?? defaultRoundMode());
+	return ROUND_MODES.indexOf(mode);
+}
+
+/** The mode an immediate names, for the BigInt executor. */
+function modeAt(code: number): RoundMode {
+	const mode = ROUND_MODES[code];
+	if (mode === undefined) {
+		throw new Error(`[ATOM_BULK_BAD_PROGRAM] Unknown rounding mode ${code}`);
+	}
+	return mode;
+}
+
+/**
+ * Options accepted wherever a planned division happens. A quotient or a root
+ * is rounded once in `mode`, the context's `roundMode` when omitted — the
+ * same as {@link Decimal.div}.
+ */
 export interface BulkDivOptions {
 	precision?: number;
+	mode?: RoundMode;
 }
 
 /** Options for {@link BulkColumn.stddev}. */
@@ -247,6 +285,7 @@ export class BulkScalar extends BulkValue {
 			Op.DivScalars,
 			[nodeOf(this), nodeOf(other)],
 			precisionOf(options),
+			modeOf(options),
 		);
 	}
 
@@ -271,7 +310,7 @@ export class BulkScalar extends BulkValue {
 	 *
 	 * A non-negative exponent is exact — scale accumulates and nothing is
 	 * dropped. A negative exponent has to divide, so it follows the same
-	 * truncate-toward-zero contract as {@link div} at `precision` digits.
+	 * contract as {@link div} at `precision` digits, rounded in `mode`.
 	 */
 	pow(exp: number, options: BulkDivOptions = {}): BulkScalar {
 		if (
@@ -288,14 +327,19 @@ export class BulkScalar extends BulkValue {
 		}
 		// A negative exponent has to divide, so it is compiled as one: the
 		// engine's power opcode stays exact by refusing to round.
-		const precision = precisionOf(options);
-		return literalScalar("1").div(scalar(Op.PowScalar, [nodeOf(this)], -exp), {
-			precision,
-		});
+		return literalScalar("1").div(
+			scalar(Op.PowScalar, [nodeOf(this)], -exp),
+			options,
+		);
 	}
 
 	sqrt(options: BulkDivOptions = {}): BulkScalar {
-		return scalar(Op.SqrtScalar, [nodeOf(this)], precisionOf(options));
+		return scalar(
+			Op.SqrtScalar,
+			[nodeOf(this)],
+			precisionOf(options),
+			modeOf(options),
+		);
 	}
 }
 
@@ -379,6 +423,7 @@ export class BulkColumn extends BulkValue {
 		// Checked even when an odd length never divides: a bad option is a bug
 		// whichever length the column happens to have today.
 		precisionOf(options);
+		modeOf(options);
 		const length = this.#length();
 		const sorted = this.sorted();
 		const middle = Math.floor(length / 2);
@@ -420,10 +465,12 @@ export class BulkColumn extends BulkValue {
 			nodeOf(this),
 			nodeOf(mean),
 		]);
+		// The variance rounds in the root's mode, as `Atom.stddev` does.
 		const variance = squares.div(literalScalar(String(divisor)), {
 			precision: working,
+			mode: options.mode,
 		});
-		return variance.sqrt({ precision });
+		return variance.sqrt({ precision, mode: options.mode });
 	}
 
 	/** Every column in one program shares a length; loads carry it. */
@@ -488,6 +535,7 @@ function literalScalar(value: string): BulkScalar {
 		code: Op.LoadScalar,
 		inputs: [],
 		imm0: 0,
+		imm1: 0,
 		parsed: [parseDecimal(value)],
 		stamp: 0,
 		slot: -1,
@@ -555,6 +603,7 @@ export class Bulk {
 			code: Op.LoadColumn,
 			inputs: [],
 			imm0: 0,
+			imm1: 0,
 			parsed,
 			stamp: 0,
 			slot: -1,
@@ -779,7 +828,7 @@ function compile(
 		program[write + 2] = isLoad ? (addresses[position] ?? 0) : (a ?? 0);
 		program[write + 3] = isLoad ? 0 : (b ?? 0);
 		program[write + 4] = isLoad ? (loadScales[position] ?? 0) : node.imm0;
-		program[write + 5] = 0;
+		program[write + 5] = node.imm1;
 		write += INSTRUCTION_WIDTH;
 	}
 
@@ -942,7 +991,7 @@ function computeScalar(node: PlanNode, memo: Map<PlanNode, unknown>): string {
 		case Op.MulScalars:
 			return mulTs(scalarAt(0), scalarAt(1));
 		case Op.DivScalars:
-			return divTs(scalarAt(0), scalarAt(1), node.imm0);
+			return divTs(scalarAt(0), scalarAt(1), node.imm0, modeAt(node.imm1));
 		case Op.NegScalar:
 			return subTs("0", scalarAt(0));
 		case Op.AbsScalar: {
@@ -958,9 +1007,10 @@ function computeScalar(node: PlanNode, memo: Map<PlanNode, unknown>): string {
 			return cmpTs(left, right) >= 0 ? left : right;
 		}
 		case Op.PowScalar:
-			return powTs(scalarAt(0), node.imm0, 0);
+			// Only ever a non-negative exponent, which never rounds.
+			return powTs(scalarAt(0), node.imm0, 0, "trunc");
 		case Op.SqrtScalar:
-			return sqrtTs(scalarAt(0), node.imm0);
+			return sqrtRoundedTs(scalarAt(0), node.imm0, modeAt(node.imm1));
 		case Op.SumColumn:
 			return columnAt(0).reduce((total, value) => addTs(total, value), "0");
 		case Op.MinColumn:

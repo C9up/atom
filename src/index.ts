@@ -154,7 +154,7 @@ function medianImpl(
 	const lower = list[mid - 1];
 	if (lower === undefined) throw new Error("Atom.median lost its middle value");
 	const precision = options.precision ?? defaultPrecision();
-	return lower.plus(upper).div("2", { precision });
+	return lower.plus(upper).div("2", { precision, mode: options.mode });
 }
 
 function modeImpl(values: Iterable<DecimalInput>): Decimal[] {
@@ -197,8 +197,11 @@ function stddevImpl(
 	// crossing, where the fold made two per value — a multiply and an add.
 	const deviations = list.map((value) => value.minus(mean));
 	const sumSquares = Decimal.dot(deviations, deviations);
+	// The variance is rounded in the same mode as the root: a directed mode
+	// asked for at the end should not be undone by a different one inside.
 	const variance = sumSquares.div(String(divisor), {
 		precision: precision + 8,
+		mode,
 	});
 	return variance.sqrt({ precision, mode });
 }

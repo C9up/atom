@@ -7,6 +7,7 @@ import {
 	addTs,
 	assertIntegerDigits,
 	assertPowerFits,
+	assertRoundMode,
 	cmpTs,
 	divTs,
 	formatDecimal,
@@ -16,25 +17,36 @@ import {
 	parseDecimal,
 	pow10BigInt,
 	powTs,
+	type RoundMode,
+	roundRationalToInt,
+	roundSqrtInt,
 	sqrtTs,
 	subTs,
 } from "./math.js";
 import { tryNativeAtom } from "./native.js";
 
 export type DecimalInput = string | number | bigint | Decimal;
-export type RoundMode = "trunc" | "floor" | "ceil" | "half-up" | "half-even";
+export type { RoundMode };
 
 export interface DecimalScaled {
 	value: bigint;
 	scale: number;
 }
 
+/**
+ * How a quotient is brought to `precision` digits: rounded once from the exact
+ * value, in `mode` — the context's `roundMode` when omitted, `half-up` unless
+ * configured otherwise.
+ */
 export interface DivOptions {
 	precision?: number;
+	mode?: RoundMode;
 }
 
+/** A negative exponent divides, so it takes a division's options. */
 export interface PowOptions {
 	precision?: number;
+	mode?: RoundMode;
 }
 
 export interface SqrtOptions {
@@ -60,6 +72,7 @@ export interface QuantizeOptions {
 
 export interface MedianOptions {
 	precision?: number;
+	mode?: RoundMode;
 }
 
 export interface StddevOptions {
@@ -242,10 +255,11 @@ export class Decimal {
 		const b = normalizeInput(other);
 		const precision = options.precision ?? defaultPrecision();
 		assertScale(precision);
+		const mode = assertRoundMode(options.mode ?? defaultRoundMode());
 		const native = tryNativeAtom();
 		const result = native
-			? native.div(this.#value, b, precision)
-			: divTs(this.#value, b, precision);
+			? native.div(this.#value, b, precision, mode)
+			: divTs(this.#value, b, precision, mode);
 		return new Decimal(result);
 	}
 
@@ -260,17 +274,18 @@ export class Decimal {
 		assertExponent(exp);
 		const precision = options.precision ?? defaultPrecision();
 		assertScale(precision);
+		const mode = assertRoundMode(options.mode ?? defaultRoundMode());
 		assertPowerFits(parseDecimal(this.#value), exp);
 		const native = tryNativeAtom();
 		const result = native
-			? native.pow(this.#value, exp, precision)
-			: powTs(this.#value, exp, precision);
+			? native.pow(this.#value, exp, precision, mode)
+			: powTs(this.#value, exp, precision, mode);
 		return new Decimal(result);
 	}
 
 	sqrt(options: SqrtOptions = {}): Decimal {
 		const precision = options.precision ?? defaultPrecision();
-		const mode = options.mode ?? defaultRoundMode();
+		const mode = assertRoundMode(options.mode ?? defaultRoundMode());
 		assertScale(precision);
 		if (mode === "trunc") {
 			return fromIntScale(this.#sqrtTruncInt(precision), precision);
@@ -843,96 +858,6 @@ function roundIntScale(
 			// type system (`as RoundMode`) would lose precision without any signal.
 			throw new Error(`Unknown rounding mode: ${String(mode)}`);
 	}
-}
-
-function roundRationalToInt(
-	numerator: bigint,
-	denominator: bigint,
-	mode: RoundMode,
-): bigint {
-	if (denominator <= 0n) {
-		throw new Error("Invalid rational denominator");
-	}
-	const q = numerator / denominator;
-	const r = numerator % denominator;
-	if (r === 0n) return q;
-
-	const absR = r < 0n ? -r : r;
-	const sign = numerator < 0n ? -1n : 1n;
-
-	switch (mode) {
-		case "trunc":
-			return q;
-		case "floor":
-			return numerator < 0n ? q - 1n : q;
-		case "ceil":
-			return numerator > 0n ? q + 1n : q;
-		case "half-up":
-			return absR * 2n >= denominator ? q + sign : q;
-		case "half-even": {
-			const twice = absR * 2n;
-			if (twice < denominator) return q;
-			if (twice > denominator) return q + sign;
-			const isEven = (q < 0n ? -q : q) % 2n === 0n;
-			return isEven ? q : q + sign;
-		}
-		default:
-			throw new Error(`Unknown rounding mode: ${String(mode)}`);
-	}
-}
-
-function roundSqrtInt(
-	value: string,
-	truncated: bigint,
-	precision: number,
-	mode: Exclude<RoundMode, "trunc">,
-): bigint {
-	const parsed = parseDecimal(value);
-	if (parsed.int < 0n) {
-		throw new Error("Cannot compute sqrt of a negative decimal");
-	}
-
-	const squareCmp = compareScaled(
-		truncated * truncated,
-		2 * precision,
-		parsed.int,
-		parsed.scale,
-	);
-
-	if (mode === "floor") return truncated;
-	if (mode === "ceil") {
-		return squareCmp === 0 ? truncated : truncated + 1n;
-	}
-
-	const thresholdCmp = compareScaled(
-		(2n * truncated + 1n) * (2n * truncated + 1n),
-		2 * precision,
-		4n * parsed.int,
-		parsed.scale,
-	);
-	if (thresholdCmp < 0) return truncated + 1n;
-	if (thresholdCmp > 0) return truncated;
-	if (mode === "half-up") return truncated + 1n;
-
-	return truncated % 2n === 0n ? truncated : truncated + 1n;
-}
-
-function compareScaled(
-	leftInt: bigint,
-	leftScale: number,
-	rightInt: bigint,
-	rightScale: number,
-): -1 | 0 | 1 {
-	let left = leftInt;
-	let right = rightInt;
-	if (leftScale > rightScale) {
-		right *= pow10BigInt(leftScale - rightScale);
-	} else if (rightScale > leftScale) {
-		left *= pow10BigInt(rightScale - leftScale);
-	}
-	if (left < right) return -1;
-	if (left > right) return 1;
-	return 0;
 }
 
 /**

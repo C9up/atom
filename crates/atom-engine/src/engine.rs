@@ -12,6 +12,65 @@ pub const MAX_SCALE: u32 = 10_000;
 /// take minutes whoever calls it.
 const MAX_POWER_DIGITS: f64 = 1_000_000.0;
 
+/// How a quotient that does not land on a digit is brought to one.
+///
+/// The names are the TypeScript `RoundMode` union's; `half-up` and `half-even`
+/// treat a negative value by its magnitude, as big.js does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoundMode {
+    Trunc,
+    Floor,
+    Ceil,
+    HalfUp,
+    HalfEven,
+}
+
+impl RoundMode {
+    pub fn parse(name: &str) -> Result<Self, String> {
+        match name {
+            "trunc" => Ok(Self::Trunc),
+            "floor" => Ok(Self::Floor),
+            "ceil" => Ok(Self::Ceil),
+            "half-up" => Ok(Self::HalfUp),
+            "half-even" => Ok(Self::HalfEven),
+            _ => Err(format!("Unknown rounding mode: {name}")),
+        }
+    }
+
+    /// Whether a truncated quotient with a non-zero remainder moves one step
+    /// away from zero. `negative` is the sign of the exact quotient, `half`
+    /// how twice the remainder compares with the divisor, by magnitude.
+    pub(crate) fn steps_away(self, negative: bool, half: Ordering, odd: bool) -> bool {
+        match self {
+            Self::Trunc => false,
+            Self::Floor => negative,
+            Self::Ceil => !negative,
+            Self::HalfUp => half != Ordering::Less,
+            Self::HalfEven => half == Ordering::Greater || (half == Ordering::Equal && odd),
+        }
+    }
+}
+
+/// `n / d` rounded once to an integer in `mode`.
+fn round_quotient(numerator: BigInt, denominator: BigInt, mode: RoundMode) -> BigInt {
+    // num-bigint divides toward zero and gives the remainder the dividend's sign.
+    let quotient = &numerator / &denominator;
+    let remainder = &numerator % &denominator;
+    if remainder.is_zero() {
+        return quotient;
+    }
+    let negative = numerator.is_negative() != denominator.is_negative();
+    let half = (remainder.abs() * 2u32).cmp(&denominator.abs());
+    let odd = !(&quotient % 2u32).is_zero();
+    if !mode.steps_away(negative, half, odd) {
+        quotient
+    } else if negative {
+        quotient - 1
+    } else {
+        quotient + 1
+    }
+}
+
 fn assert_precision(precision: u32) -> Result<(), String> {
     if precision > MAX_SCALE {
         return Err(format!("Invalid scale: {precision}"));
@@ -111,8 +170,11 @@ pub fn dot(a: &[String], b: &[String]) -> Result<String, String> {
     Ok(format_decimal(total, scale))
 }
 
-pub fn div(a: &str, b: &str, precision: u32) -> Result<String, String> {
+/// `a / b` at `precision` fractional digits, rounded once from the exact
+/// quotient in `mode` (a `RoundMode` name).
+pub fn div(a: &str, b: &str, precision: u32, mode: &str) -> Result<String, String> {
     assert_precision(precision)?;
+    let mode = RoundMode::parse(mode)?;
     let da = parse_decimal(a)?;
     let db = parse_decimal(b)?;
     if db.int.is_zero() {
@@ -127,7 +189,7 @@ pub fn div(a: &str, b: &str, precision: u32) -> Result<String, String> {
     // => (aInt * 10^(precision + bScale)) / (bInt * 10^aScale)
     let numerator = da.int * ten_pow_precision * ten_pow_db_scale;
     let denominator = db.int * ten_pow_da_scale;
-    let quotient = numerator / denominator;
+    let quotient = round_quotient(numerator, denominator, mode);
 
     Ok(format_decimal(quotient, precision))
 }
@@ -149,13 +211,14 @@ pub fn rem(a: &str, b: &str) -> Result<String, String> {
 ///
 /// - `exp == 0` → `1`
 /// - `exp > 0`  → binary exponentiation, scale = `a.scale * exp` (exact)
-/// - `exp < 0`  → `1 / a^(-exp)` at the given `precision`, truncated toward zero
+/// - `exp < 0`  → `1 / a^(-exp)` at the given `precision`, rounded in `mode`
 ///
 /// The positive path is exact because each multiplication accumulates scale
 /// without loss. The negative path has to divide, so it follows `div`'s
-/// "truncate toward zero" contract at `precision` fractional digits.
-pub fn pow(a: &str, exp: i32, precision: u32) -> Result<String, String> {
+/// contract at `precision` fractional digits.
+pub fn pow(a: &str, exp: i32, precision: u32, mode: &str) -> Result<String, String> {
     assert_precision(precision)?;
+    RoundMode::parse(mode)?;
     if exp == 0 {
         return Ok("1".to_string());
     }
@@ -164,8 +227,8 @@ pub fn pow(a: &str, exp: i32, precision: u32) -> Result<String, String> {
             .checked_neg()
             .ok_or_else(|| "Invalid exponent: below supported i32 range".to_string())?;
         check_power_size(&without_trailing_zeros(parse_decimal(a)?), exp)?;
-        let positive = pow(a, positive_exp, precision)?;
-        return div("1", &positive, precision);
+        let positive = pow(a, positive_exp, precision, mode)?;
+        return div("1", &positive, precision, mode);
     }
 
     // Binary exponentiation on the integer representation — avoids repeated
@@ -414,8 +477,8 @@ mod tests {
 
     #[test]
     fn div_works() {
-        assert_eq!(div("1", "8", 6).unwrap(), "0.125");
-        assert_eq!(div("10", "4", 4).unwrap(), "2.5");
+        assert_eq!(div("1", "8", 6, "trunc").unwrap(), "0.125");
+        assert_eq!(div("10", "4", 4, "trunc").unwrap(), "2.5");
     }
 
     #[test]
@@ -427,7 +490,7 @@ mod tests {
 
     #[test]
     fn div_by_zero_errors() {
-        assert!(div("5", "0", 10).is_err());
+        assert!(div("5", "0", 10, "trunc").is_err());
         assert!(rem("5", "0").is_err());
     }
 
@@ -465,32 +528,32 @@ mod tests {
 
     #[test]
     fn pow_works() {
-        assert_eq!(pow("2", 10, 18).unwrap(), "1024");
-        assert_eq!(pow("1.5", 2, 18).unwrap(), "2.25");
-        assert_eq!(pow("2", 0, 18).unwrap(), "1");
+        assert_eq!(pow("2", 10, 18, "trunc").unwrap(), "1024");
+        assert_eq!(pow("1.5", 2, 18, "trunc").unwrap(), "2.25");
+        assert_eq!(pow("2", 0, 18, "trunc").unwrap(), "1");
         // Negative exponent goes through div path
-        assert_eq!(pow("2", -2, 18).unwrap(), "0.25");
+        assert_eq!(pow("2", -2, 18, "trunc").unwrap(), "0.25");
     }
 
     #[test]
     fn pow_refuses_a_result_predictably_too_large_before_computing_it() {
         let base = "9".repeat(1_000);
         let started = std::time::Instant::now();
-        assert!(pow(&base, 100_000, 18).is_err());
-        assert!(pow(&base, -100_000, 18).is_err());
+        assert!(pow(&base, 100_000, 18, "trunc").is_err());
+        assert!(pow(&base, -100_000, 18, "trunc").is_err());
         assert!(started.elapsed().as_millis() < 1_000);
-        assert_eq!(pow("1", i32::MAX, 18).unwrap(), "1");
-        assert_eq!(pow("-1", i32::MAX, 18).unwrap(), "-1");
+        assert_eq!(pow("1", i32::MAX, 18, "trunc").unwrap(), "1");
+        assert_eq!(pow("-1", i32::MAX, 18, "trunc").unwrap(), "-1");
     }
 
     #[test]
     fn pow_refuses_a_scale_past_the_largest_scale_before_computing_it() {
-        assert!(pow("0.1", i32::MAX, 18).is_err());
-        assert!(pow("0.1", 10_001, 18).is_err());
-        assert_eq!(pow("0.1", 10_000, 18).unwrap().len(), 10_002);
+        assert!(pow("0.1", i32::MAX, 18, "trunc").is_err());
+        assert!(pow("0.1", 10_001, 18, "trunc").is_err());
+        assert_eq!(pow("0.1", 10_000, 18, "trunc").unwrap().len(), 10_002);
         // Trailing zeros do not count, and do not overflow the scale either.
         assert_eq!(
-            pow(&format!("1.{}", "0".repeat(10_000)), i32::MAX, 18).unwrap(),
+            pow(&format!("1.{}", "0".repeat(10_000)), i32::MAX, 18, "trunc").unwrap(),
             "1"
         );
     }
@@ -499,16 +562,40 @@ mod tests {
     fn pow_refuses_a_negative_power_whose_quotient_is_too_large() {
         // 1 / (10^-5000)^100000 has five hundred million digits.
         let tiny = format!("0.{}1", "0".repeat(4_999));
-        assert!(pow(&tiny, -100_000, 18).is_err());
-        assert_eq!(pow("0.5", -3, 18).unwrap(), "8");
+        assert!(pow(&tiny, -100_000, 18, "trunc").is_err());
+        assert_eq!(pow("0.5", -3, 18, "trunc").unwrap(), "8");
     }
 
     #[test]
     fn a_precision_past_the_largest_scale_is_refused() {
-        assert!(div("1", "3", MAX_SCALE + 1).is_err());
+        assert!(div("1", "3", MAX_SCALE + 1, "trunc").is_err());
         assert!(sqrt("2", MAX_SCALE + 1).is_err());
-        assert!(pow("2", -1, MAX_SCALE + 1).is_err());
-        assert!(div("1", "3", MAX_SCALE).is_ok());
+        assert!(pow("2", -1, MAX_SCALE + 1, "trunc").is_err());
+        assert!(div("1", "3", MAX_SCALE, "trunc").is_ok());
+    }
+
+    #[test]
+    fn div_rounds_the_exact_quotient_once_in_the_mode_asked_for() {
+        // 1/8, -1/8, 2/3, -2/3 at two digits.
+        let cases = [
+            ("trunc", ["0.12", "-0.12", "0.66", "-0.66"]),
+            ("floor", ["0.12", "-0.13", "0.66", "-0.67"]),
+            ("ceil", ["0.13", "-0.12", "0.67", "-0.66"]),
+            ("half-up", ["0.13", "-0.13", "0.67", "-0.67"]),
+            ("half-even", ["0.12", "-0.12", "0.67", "-0.67"]),
+        ];
+        for (mode, expected) in cases {
+            let got = [
+                div("1", "8", 2, mode).unwrap(),
+                div("1", "-8", 2, mode).unwrap(),
+                div("2", "3", 2, mode).unwrap(),
+                div("-2", "3", 2, mode).unwrap(),
+            ];
+            assert_eq!(got, expected, "{mode}");
+        }
+        assert_eq!(pow("1.5", -1, 2, "half-up").unwrap(), "0.67");
+        assert!(div("1", "3", 2, "bogus").is_err());
+        assert!(pow("2", 2, 2, "bogus").is_err());
     }
 
     #[test]

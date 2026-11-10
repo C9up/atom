@@ -1,5 +1,31 @@
 import { defaultMaxDigits } from "./context.js";
 
+export type RoundMode = "trunc" | "floor" | "ceil" | "half-up" | "half-even";
+
+const ROUND_MODES: readonly string[] = [
+	"trunc",
+	"floor",
+	"ceil",
+	"half-up",
+	"half-even",
+];
+
+export function isRoundMode(value: unknown): value is RoundMode {
+	return typeof value === "string" && ROUND_MODES.includes(value);
+}
+
+/**
+ * Refuse a mode before it is used. Rounding only reads it when a remainder is
+ * left over, so an unchecked typo would pass every exact quotient and fail on
+ * the first inexact one, far from where it was written.
+ */
+export function assertRoundMode(value: unknown): RoundMode {
+	if (!isRoundMode(value)) {
+		throw new Error(`Unknown rounding mode: ${String(value)}`);
+	}
+	return value;
+}
+
 export interface ParsedDecimal {
 	int: bigint;
 	scale: number;
@@ -181,16 +207,31 @@ export function mulTs(a: string, b: string): string {
 	return formatDecimal(da.int * db.int, da.scale + db.scale);
 }
 
-export function divTs(a: string, b: string, precision: number): string {
+/**
+ * `a / b` at `precision` digits, rounded once from the exact quotient — the
+ * contract of the Rust `div`.
+ */
+export function divTs(
+	a: string,
+	b: string,
+	precision: number,
+	mode: RoundMode,
+): string {
 	const da = parseDecimal(a);
 	const db = parseDecimal(b);
 	if (db.int === 0n) {
 		throw new Error("Division by zero");
 	}
-	const numerator = da.int * pow10BigInt(precision + db.scale);
-	const denominator = db.int * pow10BigInt(da.scale);
-	const q = numerator / denominator;
-	return formatDecimal(q, precision);
+	let numerator = da.int * pow10BigInt(precision + db.scale);
+	let denominator = db.int * pow10BigInt(da.scale);
+	if (denominator < 0n) {
+		numerator = -numerator;
+		denominator = -denominator;
+	}
+	return formatDecimal(
+		roundRationalToInt(numerator, denominator, mode),
+		precision,
+	);
 }
 
 export function cmpTs(a: string, b: string): -1 | 0 | 1 {
@@ -277,17 +318,23 @@ export function assertPowerFits(base: ParsedDecimal, exp: number): void {
 }
 
 /**
- * Pure-TS integer exponentiation with truncating div for negative exponents.
- * Mirrors the Rust `pow` contract so the two paths produce identical results.
+ * Pure-TS integer exponentiation; a negative exponent divides, rounded in
+ * `mode`. Mirrors the Rust `pow` contract so the two paths produce identical
+ * results.
  */
-export function powTs(a: string, exp: number, precision: number): string {
+export function powTs(
+	a: string,
+	exp: number,
+	precision: number,
+	mode: RoundMode,
+): string {
 	if (!Number.isInteger(exp)) {
 		throw new Error(`Invalid exponent: ${exp}`);
 	}
 	if (exp === 0) return "1";
 	assertPowerFits(parseDecimal(a), exp);
 	if (exp < 0) {
-		return divTs("1", powTs(a, -exp, precision), precision);
+		return divTs("1", powTs(a, -exp, precision, mode), precision, mode);
 	}
 
 	const base = parseDecimal(a);
@@ -334,6 +381,18 @@ export function sqrtTs(a: string, precision: number): string {
 	return formatDecimal(root, precision);
 }
 
+/** `sqrtTs`, rounded in `mode` — what `Decimal.sqrt` answers. */
+export function sqrtRoundedTs(
+	a: string,
+	precision: number,
+	mode: RoundMode,
+): string {
+	const root = parseDecimal(sqrtTs(a, precision));
+	if (mode === "trunc") return formatDecimal(root.int, root.scale);
+	const truncated = root.int * pow10BigInt(precision - root.scale);
+	return formatDecimal(roundSqrtInt(a, truncated, precision, mode), precision);
+}
+
 function bigintSqrt(value: bigint): bigint {
 	if (value < 0n) throw new Error("Cannot compute sqrt of negative bigint");
 	if (value < 2n) return value;
@@ -344,4 +403,99 @@ function bigintSqrt(value: bigint): bigint {
 		x1 = (x0 + value / x0) / 2n;
 	}
 	return x0;
+}
+
+/** `numerator / denominator` rounded once to an integer in `mode`. */
+export function roundRationalToInt(
+	numerator: bigint,
+	denominator: bigint,
+	mode: RoundMode,
+): bigint {
+	if (denominator <= 0n) {
+		throw new Error("Invalid rational denominator");
+	}
+	const q = numerator / denominator;
+	const r = numerator % denominator;
+	if (r === 0n) return q;
+
+	const absR = r < 0n ? -r : r;
+	const sign = numerator < 0n ? -1n : 1n;
+
+	switch (mode) {
+		case "trunc":
+			return q;
+		case "floor":
+			return numerator < 0n ? q - 1n : q;
+		case "ceil":
+			return numerator > 0n ? q + 1n : q;
+		case "half-up":
+			return absR * 2n >= denominator ? q + sign : q;
+		case "half-even": {
+			const twice = absR * 2n;
+			if (twice < denominator) return q;
+			if (twice > denominator) return q + sign;
+			const isEven = (q < 0n ? -q : q) % 2n === 0n;
+			return isEven ? q : q + sign;
+		}
+		default:
+			throw new Error(`Unknown rounding mode: ${String(mode)}`);
+	}
+}
+
+/**
+ * The root `truncated` (at `precision` digits) of `value`, rounded in `mode`
+ * by comparing squares exactly.
+ */
+export function roundSqrtInt(
+	value: string,
+	truncated: bigint,
+	precision: number,
+	mode: Exclude<RoundMode, "trunc">,
+): bigint {
+	const parsed = parseDecimal(value);
+	if (parsed.int < 0n) {
+		throw new Error("Cannot compute sqrt of a negative decimal");
+	}
+
+	const squareCmp = compareScaled(
+		truncated * truncated,
+		2 * precision,
+		parsed.int,
+		parsed.scale,
+	);
+
+	if (mode === "floor") return truncated;
+	if (mode === "ceil") {
+		return squareCmp === 0 ? truncated : truncated + 1n;
+	}
+
+	const thresholdCmp = compareScaled(
+		(2n * truncated + 1n) * (2n * truncated + 1n),
+		2 * precision,
+		4n * parsed.int,
+		parsed.scale,
+	);
+	if (thresholdCmp < 0) return truncated + 1n;
+	if (thresholdCmp > 0) return truncated;
+	if (mode === "half-up") return truncated + 1n;
+
+	return truncated % 2n === 0n ? truncated : truncated + 1n;
+}
+
+function compareScaled(
+	leftInt: bigint,
+	leftScale: number,
+	rightInt: bigint,
+	rightScale: number,
+): -1 | 0 | 1 {
+	let left = leftInt;
+	let right = rightInt;
+	if (leftScale > rightScale) {
+		right *= pow10BigInt(leftScale - rightScale);
+	} else if (rightScale > leftScale) {
+		left *= pow10BigInt(rightScale - leftScale);
+	}
+	if (left < right) return -1;
+	if (left > right) return 1;
+	return 0;
 }

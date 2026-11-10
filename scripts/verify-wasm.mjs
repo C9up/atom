@@ -45,7 +45,7 @@ for (const fn of ['add', 'sub', 'mul', 'div', 'rem', 'pow', 'sqrt', 'cmp',
 if (wasm.add('1.2', '3.4') !== '4.6') {
   throw new Error('[atom:wasm] add smoke test failed')
 }
-if (wasm.pow('2', -2, 18) !== '0.25') {
+if (wasm.pow('2', -2, 18, 'half-up') !== '0.25') {
   throw new Error('[atom:wasm] pow smoke test failed')
 }
 // The bulk VM, exercised rather than merely exported: a browser build that

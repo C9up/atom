@@ -19,9 +19,10 @@ pub fn mul(a: String, b: String) -> Result<String> {
     wrap_string(|| atom_engine::mul(&a, &b))
 }
 
+/// `mode` is a `RoundMode` name; the quotient is rounded once, in it.
 #[napi]
-pub fn div(a: String, b: String, precision: u32) -> Result<String> {
-    wrap_string(|| atom_engine::div(&a, &b, precision))
+pub fn div(a: String, b: String, precision: u32, mode: String) -> Result<String> {
+    wrap_string(|| atom_engine::div(&a, &b, precision, &mode))
 }
 
 #[napi]
@@ -30,8 +31,8 @@ pub fn rem(a: String, b: String) -> Result<String> {
 }
 
 #[napi]
-pub fn pow(a: String, exp: i32, precision: u32) -> Result<String> {
-    wrap_string(|| atom_engine::pow(&a, exp, precision))
+pub fn pow(a: String, exp: i32, precision: u32, mode: String) -> Result<String> {
+    wrap_string(|| atom_engine::pow(&a, exp, precision, &mode))
 }
 
 #[napi]

@@ -33,13 +33,13 @@ describe("Atom context", () => {
 		resetAtomContext();
 		expect(getAtomContext()).toEqual({
 			precision: 18,
-			roundMode: "trunc",
+			roundMode: "half-up",
 			quantizeMode: "half-up",
 			maxDigits: 20_000,
 		});
 
 		configureAtomContext({ precision: 4, roundMode: "ceil" });
-		expect(new Decimal("1").div("3").toString()).toBe("0.3333");
+		expect(new Decimal("1").div("3").toString()).toBe("0.3334");
 		expect(new Decimal("2").sqrt({ precision: 0 }).toString()).toBe("2");
 		expect(
 			new Decimal("2").sqrt({ precision: 0, mode: "floor" }).toString(),
@@ -52,7 +52,7 @@ describe("Atom context", () => {
 		const scoped = withAtomContext({ precision: 2 }, () =>
 			new Decimal("1").div("8").toString(),
 		);
-		expect(scoped).toBe("0.12");
+		expect(scoped).toBe("0.13");
 		expect(new Decimal("1").div("8").toString()).toBe("0.125");
 	});
 

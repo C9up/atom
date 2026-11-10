@@ -69,7 +69,16 @@ money('10.505', 'JOD').toMinorUnits() // 10505n
 import { configureAtomContext, decimal, withAtomContext } from '@c9up/atom'
 
 configureAtomContext({ precision: 8, roundMode: 'trunc' })
-withAtomContext({ precision: 2 }, () => decimal('1').div('8').toString())
+withAtomContext({ precision: 2 }, () => decimal('1').div('8').toString()) // "0.13"
+```
+
+A quotient, a root and a negative power are rounded once, from the exact
+value, to `precision` digits in `roundMode` — `half-up` unless configured
+otherwise. Every one of them also takes `{ mode }` per call:
+
+```ts
+decimal('2').div('3', { precision: 2 }).toString() // "0.67"
+decimal('2').div('3', { precision: 2, mode: 'trunc' }).toString() // "0.66"
 ```
 
 ## Bulk

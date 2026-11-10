@@ -18,7 +18,10 @@ export type AtomContextOptions = Partial<AtomContext>;
 
 const DEFAULT_CONTEXT: AtomContext = Object.freeze({
 	precision: 18,
-	roundMode: "trunc",
+	// Half-up, as big.js (`RM = 1`) and decimal.js (`rounding = 4`) round a
+	// quotient and a root by default. Truncating biased every quotient toward
+	// zero.
+	roundMode: "half-up",
 	quantizeMode: "half-up",
 	maxDigits: 20_000,
 });

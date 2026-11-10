@@ -29,11 +29,23 @@ export declare function sub(a: string, b: string): string;
 
 export declare function mul(a: string, b: string): string;
 
-export declare function div(a: string, b: string, precision: number): string;
+/** `mode` is a `RoundMode` name; the quotient is rounded once, in it. */
+
+export declare function div(
+	a: string,
+	b: string,
+	precision: number,
+	mode: string,
+): string;
 
 export declare function rem(a: string, b: string): string;
 
-export declare function pow(a: string, exp: number, precision: number): string;
+export declare function pow(
+	a: string,
+	exp: number,
+	precision: number,
+	mode: string,
+): string;
 
 export declare function sqrt(a: string, precision: number): string;
 

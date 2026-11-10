@@ -46,7 +46,7 @@ if (binding.cmp('1.20', '1.2') !== 0) {
 if (binding.rem('10.5', '3') !== '1.5') {
   throw new Error('[atom:napi] rem smoke test failed')
 }
-if (binding.pow('2', -2, 18) !== '0.25') {
+if (binding.pow('2', -2, 18, 'half-up') !== '0.25') {
   throw new Error('[atom:napi] pow smoke test failed')
 }
 if (binding.sqrt('2', 6) !== '1.414213') {

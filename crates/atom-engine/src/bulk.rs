@@ -31,8 +31,9 @@
 //! executor, which has no ceiling — so the fast path is never the reason an
 //! answer is wrong, only the reason it was quick.
 
-use crate::engine::{format_decimal, pow10, MAX_SCALE};
+use crate::engine::{format_decimal, pow10, RoundMode, MAX_SCALE};
 use num_bigint::BigInt;
+use std::cmp::Ordering;
 
 /// Fixed instruction width, in `i32` words: `[opcode, dst, a, b, imm0, imm1]`.
 ///
@@ -165,6 +166,20 @@ fn load_scale(imm0: i32) -> Outcome<u32> {
     Ok(scale)
 }
 
+/// A division or root's rounding immediate, in the compiler's numbering.
+fn mode_of(imm1: i32) -> Outcome<RoundMode> {
+    match imm1 {
+        0 => Ok(RoundMode::Trunc),
+        1 => Ok(RoundMode::Floor),
+        2 => Ok(RoundMode::Ceil),
+        3 => Ok(RoundMode::HalfUp),
+        4 => Ok(RoundMode::HalfEven),
+        _ => Err(BulkError::BadProgram(format!(
+            "unknown rounding mode {imm1}"
+        ))),
+    }
+}
+
 /// A division or root's precision immediate, which the compiler validates
 /// against the same bound before emitting it.
 fn precision_of(imm0: i32) -> Outcome<u32> {
@@ -194,6 +209,85 @@ fn isqrt(value: i128) -> i128 {
     }
     // The root of anything below 2^127 is below 2^64.
     guess as i128
+}
+
+/// `√source` at `precision` digits, rounded in `mode` — what `Decimal.sqrt`
+/// computes, on an i128.
+fn rounded_root(source: Scalar, precision: u32, mode: RoundMode) -> Outcome<i128> {
+    // The radicand at scale 2p is R = v · 10^(2p − s), and ⌊√R⌋ is the
+    // truncated root. Below half the operand's scale R is not whole: it is
+    // floored, as engine::sqrt does — ⌊√⌊R⌋⌋ = ⌊√R⌋ — and the exact R is kept
+    // for the comparisons rounding needs. Both terms are at most MAX_SCALE, so
+    // the sum cannot overflow.
+    let shift = precision + precision;
+    let lifted = if shift >= source.scale {
+        Some(
+            source
+                .value
+                .checked_mul(ten_pow(shift - source.scale)?)
+                .ok_or(BulkError::Overflow("a square root operand"))?,
+        )
+    } else {
+        None
+    };
+    let floored = match lifted {
+        Some(exact) => exact,
+        // A divisor past 10^38 leaves nothing of an i128.
+        None => ten_pow(source.scale - shift).map_or(0, |divisor| source.value / divisor),
+    };
+    let root = isqrt(floored);
+
+    // How `x` compares with `times · R`, exactly.
+    let against_radicand = |x: i128, times: i128| -> Outcome<Ordering> {
+        match lifted {
+            Some(exact) => {
+                let right = exact
+                    .checked_mul(times)
+                    .ok_or(BulkError::Overflow("a square root comparison"))?;
+                Ok(x.cmp(&right))
+            }
+            None => {
+                // x · 10^(s − 2p) against times · v. Past i128 a positive left
+                // side is certainly the larger: the right one fits.
+                let right = source
+                    .value
+                    .checked_mul(times)
+                    .ok_or(BulkError::Overflow("a square root comparison"))?;
+                if x == 0 {
+                    return Ok(0.cmp(&right));
+                }
+                Ok(ten_pow(source.scale - shift)
+                    .ok()
+                    .and_then(|factor| x.checked_mul(factor))
+                    .map_or(Ordering::Greater, |left| left.cmp(&right)))
+            }
+        }
+    };
+
+    if matches!(mode, RoundMode::Trunc | RoundMode::Floor) {
+        return Ok(root);
+    }
+    // root² ≤ ⌊R⌋ fits.
+    if against_radicand(root * root, 1)? == Ordering::Equal {
+        return Ok(root);
+    }
+    let half = if matches!(mode, RoundMode::Ceil) {
+        Ordering::Greater
+    } else {
+        // √R against root + ½, as 4R against (2·root + 1)².
+        let twice = root
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(1))
+            .and_then(|value| value.checked_mul(value))
+            .ok_or(BulkError::Overflow("a square root comparison"))?;
+        against_radicand(twice, 4)?.reverse()
+    };
+    if mode.steps_away(false, half, root % 2 != 0) {
+        root.checked_add(1)
+            .ok_or(BulkError::Overflow("a rounded square root"))
+    } else {
+        Ok(root)
+    }
 }
 
 struct Machine<'a> {
@@ -295,7 +389,7 @@ impl<'a> Machine<'a> {
         Ok(Column { values, scale })
     }
 
-    fn divide(&self, a: Scalar, b: Scalar, precision: u32) -> Outcome<Scalar> {
+    fn divide(&self, a: Scalar, b: Scalar, precision: u32, mode: RoundMode) -> Outcome<Scalar> {
         if b.value == 0 {
             return Err(BulkError::DivisionByZero);
         }
@@ -309,12 +403,30 @@ impl<'a> Machine<'a> {
             .value
             .checked_mul(ten_pow(a.scale)?)
             .ok_or(BulkError::Overflow("a division denominator"))?;
-        // i128 division truncates toward zero, which is the contract the
-        // scalar engine already follows. `i128::MIN / -1` is the one quotient
+        // Truncated first, then moved one step away from zero when the mode
+        // asks, as engine::div does. `i128::MIN / -1` is the one quotient
         // that does not fit.
-        let value = numerator
+        let quotient = numerator
             .checked_div(denominator)
             .ok_or(BulkError::Overflow("a quotient"))?;
+        let remainder = numerator
+            .checked_rem(denominator)
+            .ok_or(BulkError::Overflow("a quotient"))?;
+        let mut value = quotient;
+        if remainder != 0 {
+            let negative = (numerator < 0) != (denominator < 0);
+            // 2|r| against |d|, as |r| against |d| − |r|: no doubling to overflow.
+            let (rest, whole) = (remainder.unsigned_abs(), denominator.unsigned_abs());
+            let half = rest.cmp(&(whole - rest));
+            if mode.steps_away(negative, half, quotient % 2 != 0) {
+                value = if negative {
+                    quotient.checked_sub(1)
+                } else {
+                    quotient.checked_add(1)
+                }
+                .ok_or(BulkError::Overflow("a rounded quotient"))?;
+            }
+        }
         Ok(Scalar {
             value,
             scale: precision,
@@ -327,10 +439,9 @@ impl<'a> Machine<'a> {
     /// bounds-check-free, and this is the loop every bulk program runs once
     /// per instruction.
     fn step(&mut self, word: &[i32; INSTRUCTION_WIDTH]) -> Outcome<()> {
-        // `imm1` is decoded but unused: the sixth slot is held open so a new
-        // opcode can take a second immediate without changing the stride, and
-        // with it every program already compiled.
-        let (op, dst, a, b, imm0, _imm1) = (word[0], word[1], word[2], word[3], word[4], word[5]);
+        // `imm1` is the rounding mode of a division or a root; every other
+        // opcode ignores it.
+        let (op, dst, a, b, imm0, imm1) = (word[0], word[1], word[2], word[3], word[4], word[5]);
         match op {
             LOAD_C => {
                 if a < 0 {
@@ -588,8 +699,12 @@ impl<'a> Machine<'a> {
                 self.put_scalar(dst, Scalar { value, scale })
             }
             DIV_SS => {
-                let quotient =
-                    self.divide(self.scalar(a)?, self.scalar(b)?, precision_of(imm0)?)?;
+                let quotient = self.divide(
+                    self.scalar(a)?,
+                    self.scalar(b)?,
+                    precision_of(imm0)?,
+                    mode_of(imm1)?,
+                )?;
                 self.put_scalar(dst, quotient)
             }
             NEG_S => {
@@ -673,24 +788,12 @@ impl<'a> Machine<'a> {
                     ));
                 }
                 let precision = precision_of(imm0)?;
-                // ⌊√(v·10^-s) · 10^p⌋ = isqrt(v · 10^(2p − s)). Below half the
-                // operand's scale the radicand is divided instead, flooring it
-                // as engine::sqrt does — ⌊√⌊x⌋⌋ = ⌊√x⌋, so nothing is lost. Both
-                // terms are at most MAX_SCALE, so the sum cannot overflow.
-                let shift = precision + precision;
-                let lifted = if shift >= source.scale {
-                    source
-                        .value
-                        .checked_mul(ten_pow(shift - source.scale)?)
-                        .ok_or(BulkError::Overflow("a square root operand"))?
-                } else {
-                    // A divisor past 10^38 leaves nothing of an i128.
-                    ten_pow(source.scale - shift).map_or(0, |divisor| source.value / divisor)
-                };
+                let mode = mode_of(imm1)?;
+                let value = rounded_root(source, precision, mode)?;
                 self.put_scalar(
                     dst,
                     Scalar {
-                        value: isqrt(lifted),
+                        value,
                         scale: precision,
                     },
                 )
@@ -1141,6 +1244,116 @@ mod tests {
             ]
         );
         assert_eq!(out, vec!["1.4".to_string(), "1".to_string()]);
+    }
+
+    /// `a·10^-a_scale / b` at `precision`, in the mode numbered `code`.
+    fn quotient(a: i64, a_scale: i32, b: i64, precision: i32, code: i32) -> String {
+        let out = run(
+            &[a, b],
+            1,
+            &program(&[
+                [LOAD_S, 0, 0, 0, a_scale, 0],
+                [LOAD_S, 1, 1, 0, 0, 0],
+                [DIV_SS, 2, 0, 1, precision, code],
+                [OUT_S, 0, 2, 0, 0, 0],
+            ]),
+        )
+        .unwrap();
+        out[0].clone()
+    }
+
+    /// `√(a·10^-a_scale)` at `precision`, in the mode numbered `code`.
+    fn root(a: i64, a_scale: i32, precision: i32, code: i32) -> String {
+        let out = run(
+            &[a],
+            1,
+            &program(&[
+                [LOAD_S, 0, 0, 0, a_scale, 0],
+                [SQRT_S, 1, 0, 0, precision, code],
+                [OUT_S, 0, 1, 0, 0, 0],
+            ]),
+        )
+        .unwrap();
+        out[0].clone()
+    }
+
+    #[test]
+    fn division_and_roots_round_as_the_scalar_engine_does_in_every_mode() {
+        let modes = ["trunc", "floor", "ceil", "half-up", "half-even"];
+        let cases: [(i64, i32, i64, i32); 8] = [
+            (1, 0, 8, 2),
+            (1, 0, -8, 2),
+            (-2, 0, 3, 4),
+            (2, 0, 3, 4),
+            (225, 2, 7, 0),
+            (2123, 3, 3, 1),
+            (625, 2, -4, 0),
+            (2, 0, 3, 12),
+        ];
+        for (code, mode) in modes.iter().enumerate() {
+            let code = code as i32;
+            for (a, a_scale, b, precision) in cases {
+                let text = format_decimal(BigInt::from(a), a_scale as u32);
+                let expected = crate::engine::div(&text, &b.to_string(), precision as u32, mode);
+                assert_eq!(
+                    quotient(a, a_scale, b, precision, code),
+                    expected.unwrap(),
+                    "{text}/{b} {mode}"
+                );
+                if a >= 0 {
+                    let truncated = crate::engine::sqrt(&text, precision as u32).unwrap();
+                    assert_eq!(
+                        root(a, a_scale, precision, code),
+                        expected_root(&text, &truncated, precision as u32, mode),
+                        "√{text} {mode}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The rounded root, from the truncated one and exact BigInt comparisons.
+    fn expected_root(value: &str, truncated: &str, precision: u32, mode: &str) -> String {
+        let v = crate::engine::parse_decimal(value).unwrap();
+        let t = crate::engine::parse_decimal(truncated).unwrap();
+        let t_int = &t.int * pow10(precision - t.scale);
+        // Compare x / 10^(2p) with v.int / 10^v.scale.
+        let cmp = |x: BigInt, times: u32| {
+            (x * pow10(v.scale)).cmp(&(&v.int * times * pow10(2 * precision)))
+        };
+        let exact = cmp(&t_int * &t_int, 1) == Ordering::Equal;
+        let threshold = cmp((&t_int * 2 + 1) * (&t_int * 2 + 1), 4);
+        let up = match mode {
+            "trunc" | "floor" => false,
+            "ceil" => !exact,
+            "half-up" => threshold != Ordering::Greater,
+            _ => {
+                threshold == Ordering::Less
+                    || (threshold == Ordering::Equal && &t_int % 2 != BigInt::from(0))
+            }
+        };
+        format_decimal(if up { t_int + 1 } else { t_int }, precision)
+    }
+
+    #[test]
+    fn an_unknown_rounding_mode_is_refused() {
+        for op in [DIV_SS, SQRT_S] {
+            let error = run(
+                &[2],
+                1,
+                &program(&[[LOAD_S, 0, 0, 0, 0, 0], [op, 1, 0, 0, 2, 5]]),
+            )
+            .unwrap_err();
+            assert!(matches!(error, BulkError::BadProgram(_)), "{op}: {error:?}");
+        }
+    }
+
+    #[test]
+    fn a_rounded_quotient_moves_away_from_zero_on_both_signs() {
+        assert_eq!(quotient(3, 0, 2, 0, 3), "2");
+        assert_eq!(quotient(-3, 0, 2, 0, 3), "-2");
+        assert_eq!(quotient(-3, 0, 2, 0, 1), "-2");
+        assert_eq!(quotient(-3, 0, 2, 0, 2), "-1");
     }
 
     #[test]
