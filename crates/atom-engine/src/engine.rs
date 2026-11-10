@@ -2,6 +2,23 @@ use num_bigint::BigInt;
 use num_traits::{Signed, Zero};
 use std::cmp::Ordering;
 
+/// The most fractional digits a precision or a scale may ask for — kept in
+/// step with `MAX_SCALE` in `src/math.ts`.
+pub const MAX_SCALE: u32 = 10_000;
+
+/// The most significant digits a power may produce: the highest `maxDigits`
+/// the TypeScript context accepts. The facade checks its own, lower, bound
+/// first; this one keeps the engine from being asked for a power that would
+/// take minutes whoever calls it.
+const MAX_POWER_DIGITS: f64 = 1_000_000.0;
+
+fn assert_precision(precision: u32) -> Result<(), String> {
+    if precision > MAX_SCALE {
+        return Err(format!("Invalid scale: {precision}"));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct Decimal {
     pub(crate) int: BigInt,
@@ -95,6 +112,7 @@ pub fn dot(a: &[String], b: &[String]) -> Result<String, String> {
 }
 
 pub fn div(a: &str, b: &str, precision: u32) -> Result<String, String> {
+    assert_precision(precision)?;
     let da = parse_decimal(a)?;
     let db = parse_decimal(b)?;
     if db.int.is_zero() {
@@ -137,6 +155,7 @@ pub fn rem(a: &str, b: &str) -> Result<String, String> {
 /// without loss. The negative path has to divide, so it follows `div`'s
 /// "truncate toward zero" contract at `precision` fractional digits.
 pub fn pow(a: &str, exp: i32, precision: u32) -> Result<String, String> {
+    assert_precision(precision)?;
     if exp == 0 {
         return Ok("1".to_string());
     }
@@ -144,13 +163,17 @@ pub fn pow(a: &str, exp: i32, precision: u32) -> Result<String, String> {
         let positive_exp = exp
             .checked_neg()
             .ok_or_else(|| "Invalid exponent: below supported i32 range".to_string())?;
+        check_power_size(&without_trailing_zeros(parse_decimal(a)?), exp)?;
         let positive = pow(a, positive_exp, precision)?;
         return div("1", &positive, precision);
     }
 
     // Binary exponentiation on the integer representation — avoids repeated
     // string parsing at each multiplication step.
-    let mut base = parse_decimal(a)?;
+    // Canonical first: a trailing zero of the fraction would otherwise
+    // multiply the scale for nothing.
+    let mut base = without_trailing_zeros(parse_decimal(a)?);
+    check_power_size(&base, exp)?;
     let mut result_int = BigInt::from(1u32);
     let mut result_scale: u32 = 0;
     let mut e = exp as u32;
@@ -162,6 +185,8 @@ pub fn pow(a: &str, exp: i32, precision: u32) -> Result<String, String> {
         }
         e >>= 1;
         if e > 0 {
+            // Bounded by the check above: the squared scale never passes
+            // `scale * exp`.
             base = Decimal {
                 int: &base.int * &base.int,
                 scale: base.scale * 2,
@@ -172,6 +197,50 @@ pub fn pow(a: &str, exp: i32, precision: u32) -> Result<String, String> {
     Ok(format_decimal(result_int, result_scale))
 }
 
+/// Refuse a power whose size is predictably out of bounds, before computing it.
+///
+/// A positive power of a canonical base carries exactly `scale · exp`
+/// fractional digits, and about `exp · log10|int|` significant ones. A negative
+/// power is `1 / base^|exp|`: that intermediate is sized the same way, and the
+/// quotient's integer part has about `|exp| · (scale − log10|int|)` digits.
+///
+/// `base` must be canonical — see [`without_trailing_zeros`].
+fn check_power_size(base: &Decimal, exp: i32) -> Result<(), String> {
+    if base.int.is_zero() {
+        return Ok(());
+    }
+    let steps = exp.unsigned_abs();
+    let scale = base.scale;
+    if exp > 0
+        && scale
+            .checked_mul(steps)
+            .is_none_or(|result_scale| result_scale > MAX_SCALE)
+    {
+        return Err("Invalid scale: a power's scale is past the largest scale".to_string());
+    }
+    // |int| lies in [2^(bits-1), 2^bits).
+    let bits = base.int.bits() as f64;
+    let at_least = (bits - 1.0) * std::f64::consts::LOG10_2;
+    let at_most = bits * std::f64::consts::LOG10_2;
+    let steps = f64::from(steps);
+    let too_large = steps * at_least > MAX_POWER_DIGITS
+        || (exp < 0 && steps * (f64::from(scale) - at_most) > MAX_POWER_DIGITS);
+    if too_large {
+        return Err("A power past the bound of significant digits".to_string());
+    }
+    Ok(())
+}
+
+/// The same value at the smallest scale that holds it.
+fn without_trailing_zeros(mut decimal: Decimal) -> Decimal {
+    let ten = BigInt::from(10u32);
+    while decimal.scale > 0 && (&decimal.int % &ten).is_zero() {
+        decimal.int /= &ten;
+        decimal.scale -= 1;
+    }
+    decimal
+}
+
 /// Integer square root of a decimal — returns the largest value `r` such that
 /// `r * r <= input` at `precision` fractional digits, following the Newton
 /// iteration on BigInt. Returns an error for negative inputs.
@@ -179,6 +248,7 @@ pub fn pow(a: &str, exp: i32, precision: u32) -> Result<String, String> {
 /// This is the "truncated" sqrt; rounding modes are applied in the TS layer
 /// by requesting one extra digit of precision and rounding the last.
 pub fn sqrt(a: &str, precision: u32) -> Result<String, String> {
+    assert_precision(precision)?;
     let parsed = parse_decimal(a)?;
     if parsed.int < BigInt::from(0) {
         return Err("Cannot compute sqrt of a negative decimal".to_string());
@@ -400,6 +470,45 @@ mod tests {
         assert_eq!(pow("2", 0, 18).unwrap(), "1");
         // Negative exponent goes through div path
         assert_eq!(pow("2", -2, 18).unwrap(), "0.25");
+    }
+
+    #[test]
+    fn pow_refuses_a_result_predictably_too_large_before_computing_it() {
+        let base = "9".repeat(1_000);
+        let started = std::time::Instant::now();
+        assert!(pow(&base, 100_000, 18).is_err());
+        assert!(pow(&base, -100_000, 18).is_err());
+        assert!(started.elapsed().as_millis() < 1_000);
+        assert_eq!(pow("1", i32::MAX, 18).unwrap(), "1");
+        assert_eq!(pow("-1", i32::MAX, 18).unwrap(), "-1");
+    }
+
+    #[test]
+    fn pow_refuses_a_scale_past_the_largest_scale_before_computing_it() {
+        assert!(pow("0.1", i32::MAX, 18).is_err());
+        assert!(pow("0.1", 10_001, 18).is_err());
+        assert_eq!(pow("0.1", 10_000, 18).unwrap().len(), 10_002);
+        // Trailing zeros do not count, and do not overflow the scale either.
+        assert_eq!(
+            pow(&format!("1.{}", "0".repeat(10_000)), i32::MAX, 18).unwrap(),
+            "1"
+        );
+    }
+
+    #[test]
+    fn pow_refuses_a_negative_power_whose_quotient_is_too_large() {
+        // 1 / (10^-5000)^100000 has five hundred million digits.
+        let tiny = format!("0.{}1", "0".repeat(4_999));
+        assert!(pow(&tiny, -100_000, 18).is_err());
+        assert_eq!(pow("0.5", -3, 18).unwrap(), "8");
+    }
+
+    #[test]
+    fn a_precision_past_the_largest_scale_is_refused() {
+        assert!(div("1", "3", MAX_SCALE + 1).is_err());
+        assert!(sqrt("2", MAX_SCALE + 1).is_err());
+        assert!(pow("2", -1, MAX_SCALE + 1).is_err());
+        assert!(div("1", "3", MAX_SCALE).is_ok());
     }
 
     #[test]

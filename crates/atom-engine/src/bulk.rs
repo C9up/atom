@@ -31,7 +31,7 @@
 //! executor, which has no ceiling — so the fast path is never the reason an
 //! answer is wrong, only the reason it was quick.
 
-use crate::engine::{format_decimal, pow10};
+use crate::engine::{format_decimal, pow10, MAX_SCALE};
 use num_bigint::BigInt;
 
 /// Fixed instruction width, in `i32` words: `[opcode, dst, a, b, imm0, imm1]`.
@@ -44,11 +44,9 @@ pub const INSTRUCTION_WIDTH: usize = 6;
 const COLUMN_REGISTERS: usize = 16;
 const SCALAR_REGISTERS: usize = 32;
 
-/// The largest scale a value may carry — `Decimal`'s own bound, kept in step
-/// with `MAX_SCALE` in `src/Decimal.ts`. A working scale past it is handed to
-/// the BigInt executor, which applies the same bound with its own message, and
-/// it keeps `format_decimal` from padding millions of zeros.
-const MAX_SCALE: u32 = 10_000;
+// A working scale past `MAX_SCALE` is handed to the BigInt executor, which
+// applies the same bound with its own message, and it keeps `format_decimal`
+// from padding millions of zeros.
 
 /// Why a bulk run stopped.
 ///

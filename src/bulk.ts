@@ -34,6 +34,7 @@ import {
 import type { ParsedDecimal } from "./math.js";
 import {
 	addTs,
+	assertIntegerDigits,
 	cmpTs,
 	divTs,
 	formatDecimal,
@@ -447,7 +448,10 @@ export class BulkColumn extends BulkValue {
  * opposite of what a caller holding integers has any reason to expect.
  */
 function parseInput(value: DecimalInput): ParsedDecimal {
-	if (typeof value === "bigint") return { int: value, scale: 0 };
+	if (typeof value === "bigint") {
+		assertIntegerDigits(value);
+		return { int: value, scale: 0 };
+	}
 	if (typeof value === "number" && Number.isSafeInteger(value)) {
 		return { int: BigInt(value), scale: 0 };
 	}
@@ -457,7 +461,10 @@ function parseInput(value: DecimalInput): ParsedDecimal {
 
 /** A whole number, however it was written. */
 function toInteger(value: string | number | bigint): bigint {
-	if (typeof value === "bigint") return value;
+	if (typeof value === "bigint") {
+		assertIntegerDigits(value);
+		return value;
+	}
 	if (typeof value === "number") {
 		if (!Number.isSafeInteger(value)) {
 			throw new Error(

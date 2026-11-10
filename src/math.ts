@@ -1,6 +1,51 @@
+import { defaultMaxDigits } from "./context.js";
+
 export interface ParsedDecimal {
 	int: bigint;
 	scale: number;
+}
+
+/** The most fractional digits a value, a precision or a scale may ask for. */
+export const MAX_SCALE = 10_000;
+
+function tooLarge(what: string): Error {
+	return new Error(
+		`[ATOM_DECIMAL_TOO_LARGE] ${what} past the bound of ${defaultMaxDigits()} significant digits (configureAtomContext({ maxDigits }) sets it)`,
+	);
+}
+
+/** Digits that cost something: leading zeros and a fraction's trailing ones do not. */
+function significantDigits(whole: string, frac: string): number {
+	let fracEnd = frac.length;
+	while (fracEnd > 0 && frac.charCodeAt(fracEnd - 1) === 48) fracEnd--;
+	let wholeStart = 0;
+	while (wholeStart < whole.length && whole.charCodeAt(wholeStart) === 48) {
+		wholeStart++;
+	}
+	if (wholeStart < whole.length) return whole.length - wholeStart + fracEnd;
+	let fracStart = 0;
+	while (fracStart < fracEnd && frac.charCodeAt(fracStart) === 48) fracStart++;
+	return fracEnd - fracStart;
+}
+
+let boundDigits = 0;
+let boundLimit = 1n;
+
+/**
+ * Refuse a whole number of more than the bound's digits.
+ *
+ * Compared against a cached `10^bound` rather than measured through
+ * `toString()`, which is the very cost being refused.
+ */
+export function assertIntegerDigits(value: bigint): void {
+	const bound = defaultMaxDigits();
+	if (bound !== boundDigits) {
+		boundLimit = 10n ** BigInt(bound);
+		boundDigits = bound;
+	}
+	if (value >= boundLimit || value <= -boundLimit) {
+		throw tooLarge("A whole number");
+	}
 }
 
 /**
@@ -80,9 +125,20 @@ export function parseDecimal(input: string): ParsedDecimal {
 	if (whole.length + frac.length === 0) {
 		throw new Error(`Invalid decimal: ${input}`);
 	}
+	// Both bounds are checked on the text, before any BigInt is built: a scale
+	// past MAX_SCALE would otherwise be paid for by aligning the other operand
+	// to it, one multiplication by ten per digit.
+	if (frac.length > MAX_SCALE) {
+		throw new Error(`Invalid scale: ${frac.length}`);
+	}
+	if (significantDigits(whole, frac) > defaultMaxDigits()) {
+		throw tooLarge("A decimal");
+	}
 
-	const digits = `${whole}${frac}` || "0";
-	const int = BigInt(digits) * sign;
+	const digits = `${whole}${frac}`;
+	let start = 0;
+	while (start < digits.length - 1 && digits.charCodeAt(start) === 48) start++;
+	const int = BigInt(digits.slice(start)) * sign;
 	return { int, scale: frac.length };
 }
 
@@ -187,6 +243,40 @@ export function modTs(a: string, b: string): string {
 }
 
 /**
+ * Refuse a power that would not fit, before computing it.
+ *
+ * Both sizes are known from the base: a power of a canonical base carries
+ * `scale · exp` fractional digits exactly, and about `exp · log10|int|`
+ * significant ones. A negative power divides one by that, so its integer part
+ * has about `|exp| · (scale − log10|int|)` digits. Computing first and
+ * refusing on the way out was how `pow(1.1, 100000)` and a thousand-digit base
+ * to the 100 000th ran for minutes before failing.
+ */
+export function assertPowerFits(base: ParsedDecimal, exp: number): void {
+	if (exp === 0 || base.int === 0n) return;
+	let int = base.int < 0n ? -base.int : base.int;
+	let scale = base.scale;
+	// Trailing zeros of a fraction are not digits the power multiplies.
+	while (scale > 0 && int % 10n === 0n) {
+		int /= 10n;
+		scale--;
+	}
+	const steps = Math.abs(exp);
+	if (exp > 0 && scale * steps > MAX_SCALE) {
+		throw new Error(`Invalid scale: ${scale * steps}`);
+	}
+	const text = int.toString();
+	const lead = Math.min(text.length, 15);
+	const log10 = Math.log10(Number(text.slice(0, lead))) + (text.length - lead);
+	// The exact count is checked again when the result is read; this only has
+	// to refuse what is certainly past the bound.
+	const bound = defaultMaxDigits();
+	if (steps * log10 > bound || (exp < 0 && steps * (scale - log10) > bound)) {
+		throw tooLarge("A power");
+	}
+}
+
+/**
  * Pure-TS integer exponentiation with truncating div for negative exponents.
  * Mirrors the Rust `pow` contract so the two paths produce identical results.
  */
@@ -195,6 +285,7 @@ export function powTs(a: string, exp: number, precision: number): string {
 		throw new Error(`Invalid exponent: ${exp}`);
 	}
 	if (exp === 0) return "1";
+	assertPowerFits(parseDecimal(a), exp);
 	if (exp < 0) {
 		return divTs("1", powTs(a, -exp, precision), precision);
 	}

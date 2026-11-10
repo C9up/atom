@@ -5,9 +5,12 @@ import {
 } from "./context.js";
 import {
 	addTs,
+	assertIntegerDigits,
+	assertPowerFits,
 	cmpTs,
 	divTs,
 	formatDecimal,
+	MAX_SCALE,
 	modTs,
 	mulTs,
 	parseDecimal,
@@ -74,8 +77,7 @@ export type DecimalSafeParseResult =
 	| { success: true; value: Decimal }
 	| { success: false; error: Error };
 
-/** The most fractional digits a value, a precision or a scale may ask for. */
-export const MAX_SCALE = 10_000;
+export { MAX_SCALE };
 /** The largest exponent, either sign, that {@link Decimal.pow} takes. */
 export const MAX_EXPONENT_ABS = 100_000;
 
@@ -258,6 +260,7 @@ export class Decimal {
 		assertExponent(exp);
 		const precision = options.precision ?? defaultPrecision();
 		assertScale(precision);
+		assertPowerFits(parseDecimal(this.#value), exp);
 		const native = tryNativeAtom();
 		const result = native
 			? native.pow(this.#value, exp, precision)
@@ -682,6 +685,7 @@ function normalizeInput(value: DecimalInput): string {
 		return value.toString();
 	}
 	if (typeof value === "bigint") {
+		assertIntegerDigits(value);
 		return value.toString();
 	}
 	if (typeof value === "number") {
@@ -755,7 +759,10 @@ function normalizeDecimalString(input: string): string {
 }
 
 function parseIntegerInput(value: string | number | bigint): bigint {
-	if (typeof value === "bigint") return value;
+	if (typeof value === "bigint") {
+		assertIntegerDigits(value);
+		return value;
+	}
 	if (typeof value === "number") {
 		if (!Number.isInteger(value)) {
 			throw new Error(`Invalid integer: ${value}`);
@@ -769,7 +776,8 @@ function parseIntegerInput(value: string | number | bigint): bigint {
 	if (!/^[+-]?\d+$/.test(s)) {
 		throw new Error(`Invalid integer: ${value}`);
 	}
-	return BigInt(s);
+	// The pattern leaves no fraction, so this only adds the digit bound.
+	return parseDecimal(s).int;
 }
 
 function fromIntScale(int: bigint, scale: number): Decimal {
