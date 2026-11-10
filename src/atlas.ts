@@ -35,13 +35,14 @@ export interface DecimalAtlasAdapter {
 	prepare(value: unknown): string | null;
 }
 
+/**
+ * What `@Column(decimalColumn(...))` receives: the adapter plus the two
+ * `ColumnOptions` fields Atlas reads for it — `type`, which its Postgres binds
+ * cast to, and `nullable`. Spelled structurally, so Atom never imports Atlas.
+ */
 export interface DecimalAtlasColumn extends DecimalAtlasAdapter {
-	meta: {
-		atomDecimal: true;
-		columnType: "decimal" | "numeric";
-		scale?: number;
-		nullable: boolean;
-	};
+	type: "decimal" | "numeric";
+	nullable: boolean;
 }
 
 /**
@@ -107,12 +108,8 @@ export function decimalColumn(
 	const columnType = options.columnType ?? "decimal";
 	const nullable = options.nullable ?? true;
 	const adapter: DecimalAtlasColumn = {
-		meta: {
-			atomDecimal: true,
-			columnType,
-			scale: options.scale,
-			nullable,
-		},
+		type: columnType,
+		nullable,
 		consume(raw: unknown): Decimal | null {
 			const value = decimalAtlasAdapter.consume(raw);
 			if (value === null) {

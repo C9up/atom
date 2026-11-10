@@ -107,16 +107,29 @@ describe("decimalAtlasAdapter", () => {
 });
 
 describe("decimalColumn", () => {
-	it("adds Atlas-friendly metadata without changing the base adapter shape", () => {
+	it("hands @Column the fields it reads: type, nullable, prepare, consume", () => {
 		const column = decimalColumn({ scale: 2, nullable: false });
-		expect(column.meta).toEqual({
-			atomDecimal: true,
-			columnType: "decimal",
-			scale: 2,
-			nullable: false,
-		});
+		// Atlas's ColumnOptions names: `type` is what its Postgres bind casts
+		// key off (`$1::decimal`), `nullable` what schema checks compare. A
+		// field it does not read would be dead metadata.
+		expect(Object.keys(column).sort()).toEqual([
+			"consume",
+			"nullable",
+			"prepare",
+			"type",
+		]);
+		expect(column.type).toBe("decimal");
+		expect(column.nullable).toBe(false);
 		expect(column.consume("12.30")?.toString()).toBe("12.3");
 		expect(column.prepare(new Decimal("12.30"))).toBe("12.3");
+	});
+
+	it("passes the column type it is given, and defaults to nullable", () => {
+		const column = decimalColumn({ columnType: "numeric" });
+		expect(column.type).toBe("numeric");
+		expect(column.nullable).toBe(true);
+		expect(column.consume(null)).toBeNull();
+		expect(Object.isFrozen(column)).toBe(true);
 	});
 
 	it("enforces nullable and scale options", () => {
