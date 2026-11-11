@@ -125,11 +125,12 @@ never wrong.
 
 ```ts
 import { Column } from '@c9up/atlas'
+import type { Decimal } from '@c9up/atom'
 import { decimalColumn } from '@c9up/atom/atlas'
 
 class Invoice {
   @Column(decimalColumn({ scale: 2, nullable: false }))
-  total!: Decimal
+  declare total: Decimal
 }
 ```
 
