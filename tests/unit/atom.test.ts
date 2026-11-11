@@ -5,6 +5,7 @@ import {
 	Decimal,
 	decimal,
 	isNativeAvailable,
+	Money,
 	max,
 	median,
 	min,
@@ -389,6 +390,39 @@ describe("atom > unsafe decimal inputs", () => {
 		expect(() => new Decimal(".")).toThrow(/Invalid decimal/);
 		expect(() => new Decimal("+")).toThrow(/Invalid decimal/);
 		expect(() => new Decimal("-")).toThrow(/Invalid decimal/);
+	});
+
+	it("rejects NaN and the infinities, as numbers and as text", () => {
+		// Neither has digits to parse: let through, `Money.fromMinorUnits(0 / 0)`
+		// would store "NaN" as an amount.
+		for (const value of [
+			Number.NaN,
+			Number.POSITIVE_INFINITY,
+			Number.NEGATIVE_INFINITY,
+			"NaN",
+			"Infinity",
+			"-Infinity",
+		]) {
+			expect(() => new Decimal(value)).toThrow(/Invalid decimal/);
+			expect(() => new Decimal("1").plus(value)).toThrow(/Invalid decimal/);
+			expect(() => Atom.sum(["1", value])).toThrow(/Invalid decimal/);
+			expect(() =>
+				Atom.bulk((b) => ({ c: b.column(["1", value]).sum() })),
+			).toThrow(/Invalid decimal/);
+			expect(Decimal.safeParse(value).success).toBe(false);
+		}
+		for (const value of [
+			Number.NaN,
+			Number.POSITIVE_INFINITY,
+			Number.NEGATIVE_INFINITY,
+		]) {
+			expect(() => Decimal.fromMinorUnits(value, 2)).toThrow(
+				/Invalid integer|Unsafe integer/,
+			);
+			expect(() => Money.fromMinorUnits(value, "EUR")).toThrow(
+				/Invalid integer|Unsafe integer/,
+			);
+		}
 	});
 
 	it("rejects unsafe integer inputs in minor-unit and allocation helpers", () => {
