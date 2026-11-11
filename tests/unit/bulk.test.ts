@@ -272,46 +272,45 @@ describe("Atom.bulk", () => {
 		expect(typeof isNativeAvailable()).toBe("boolean");
 	});
 
-	it.skipIf(!isNativeAvailable())(
-		"really hands the plan to the engine rather than quietly falling back",
-		() => {
-			// Without this, every test above would still pass if the compiler
-			// gave up on every plan and the BigInt executor answered all of
-			// them. The fast path has to be shown to run, not assumed.
-			const engine = nativeAtom();
-			let crossings = 0;
-			__overrideNativeForTesting({
-				...engine,
-				runBulk: (values, rows, program) => {
-					crossings += 1;
-					return engine.runBulk(values, rows, program);
-				},
+	it("really hands the plan to the engine rather than quietly falling back", () => {
+		// Without this, every test above would still pass if the compiler
+		// gave up on every plan and the BigInt executor answered all of
+		// them. The fast path has to be shown to run, not assumed. Not
+		// skipped when the binary is missing: `nativeAtom()` throws, and a
+		// checkout that lost its engine fails here instead of going quiet.
+		const engine = nativeAtom();
+		let crossings = 0;
+		__overrideNativeForTesting({
+			...engine,
+			runBulk: (values, rows, program) => {
+				crossings += 1;
+				return engine.runBulk(values, rows, program);
+			},
+		});
+		try {
+			const plan = new Bulk();
+			const gross = plan.column(QUANTITIES).times(plan.column(PRICES));
+			const { net } = plan.run({
+				net: gross.sum().minus(gross.sum().times(plan.of("0.0025"))),
 			});
-			try {
-				const plan = new Bulk();
-				const gross = plan.column(QUANTITIES).times(plan.column(PRICES));
-				const { net } = plan.run({
-					net: gross.sum().minus(gross.sum().times(plan.of("0.0025"))),
-				});
-				expect(crossings).toBe(1);
-				expect(net.toString()).toBe(
-					Decimal.dot(QUANTITIES, PRICES)
-						.minus(Decimal.dot(QUANTITIES, PRICES).times("0.0025"))
-						.toString(),
-				);
+			expect(crossings).toBe(1);
+			expect(net.toString()).toBe(
+				Decimal.dot(QUANTITIES, PRICES)
+					.minus(Decimal.dot(QUANTITIES, PRICES).times("0.0025"))
+					.toString(),
+			);
 
-				// A 500-step chain is still one crossing. That is the whole point.
-				const chain = new Bulk();
-				let running = chain.of("1000.00");
-				const payment = chain.of("12.50");
-				for (let i = 0; i < 500; i++) running = running.plus(payment);
-				chain.run({ balance: running });
-				expect(crossings).toBe(2);
-			} finally {
-				__overrideNativeForTesting(undefined);
-			}
-		},
-	);
+			// A 500-step chain is still one crossing. That is the whole point.
+			const chain = new Bulk();
+			let running = chain.of("1000.00");
+			const payment = chain.of("12.50");
+			for (let i = 0; i < 500; i++) running = running.plus(payment);
+			chain.run({ balance: running });
+			expect(crossings).toBe(2);
+		} finally {
+			__overrideNativeForTesting(undefined);
+		}
+	});
 });
 
 describe("Atom.bulk — every operation against Decimal", () => {
