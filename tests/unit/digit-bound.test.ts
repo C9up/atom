@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	Atom,
 	Bulk,
 	configureAtomContext,
 	Decimal,
@@ -244,6 +245,71 @@ describe("Decimal — work that grows with the input, not with its square", () =
 		};
 		onBothEngines(() => {
 			expect(growth(normalise, 2_500, 10_000)).toBeLessThan(MAX_GROWTH);
+		});
+	});
+
+	it("sums a list with one tiny value in time linear in its scale", () => {
+		// One `1e-10000` raised every other member of the list to its scale,
+		// each by a power of ten rebuilt one multiplication at a time.
+		const ones = Array.from({ length: 1_000 }, () => "1");
+		const total = (zeros: number) => {
+			expect(Decimal.sum([`1e-${zeros}`, ...ones]).toParts().scale).toBe(zeros);
+		};
+		onBothEngines(() => {
+			expect(Decimal.sum([`1e-10000`, ...ones]).toString()).toBe(
+				`1000.${"0".repeat(9_999)}1`,
+			);
+			expect(growth(total, 2_500, 10_000)).toBeLessThan(MAX_GROWTH);
+		});
+	});
+
+	it("takes a dot product of mixed scales in time linear in the scale", () => {
+		const values = (zeros: number) => [
+			`1e-${zeros}`,
+			...Array.from({ length: 500 }, () => "1"),
+		];
+		const product = (zeros: number) => {
+			const list = values(zeros);
+			expect(Decimal.dot(list, list).toParts().scale).toBe(2 * zeros);
+		};
+		onBothEngines(() => {
+			const list = values(5_000);
+			expect(Decimal.dot(list, list).toString()).toBe(
+				`500.${"0".repeat(9_999)}1`,
+			);
+			expect(growth(product, 1_250, 5_000)).toBeLessThan(MAX_GROWTH);
+		});
+	});
+
+	it("compares across scales in time linear in the scale", () => {
+		// Every comparison of an integer with a value at scale 10 000 aligned
+		// the integer to it.
+		const values = (zeros: number) =>
+			Array.from({ length: 200 }, (_, index) => [
+				String(index + 1),
+				`${index + 1}e-${zeros}`,
+			]).flat();
+		const extremes = (zeros: number) => {
+			const list = values(zeros);
+			expect(Atom.min(list).toParts().scale).toBe(zeros);
+			expect(Atom.max(list).toString()).toBe("200");
+			expect(Atom.median(list).toFixed(1)).toBe("0.5");
+		};
+		onBothEngines(() => {
+			expect(growth(extremes, 2_500, 10_000)).toBeLessThan(MAX_GROWTH);
+		});
+	});
+
+	it("keeps a product whose working scale passes the largest scale but whose value does not", () => {
+		// 5e-5000 * 2e-5001 is 1e-10000: the digits the product works at are
+		// not the digits it ends with.
+		onBothEngines(() => {
+			expect(new Decimal("5e-5000").times("2e-5001").toString()).toBe(
+				`0.${"0".repeat(9_999)}1`,
+			);
+			expect(() => new Decimal("5e-5000").times("3e-5001")).toThrow(
+				/Invalid scale/,
+			);
 		});
 	});
 });

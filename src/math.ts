@@ -254,11 +254,92 @@ export function alignScale(
 	return [a.int * factor, b.int, b.scale];
 }
 
-/** Exact `10^exp` as a `bigint`. Exported — single definition for the whole TS side. */
+/** The distance between two rungs of the power-of-ten ladder. */
+const LADDER_STEP = 100;
+
+/**
+ * Rungs up to twice the largest scale: a product is worked at the sum of two
+ * scales, and a square root's radicand at twice its precision.
+ */
+const LADDER_RUNGS = (2 * MAX_SCALE) / LADDER_STEP;
+
+/**
+ * `10^(100·k)`, each built the first time it is asked for. Every rung kept is
+ * under a megabyte all together, which is what bounds the cache.
+ */
+const ladder: Array<bigint | undefined> = [];
+
+/**
+ * Exact `10^exp` as a `bigint`. Exported — single definition for the whole TS
+ * side.
+ *
+ * Built from the ladder's rung below `exp` and one small power, so a scale
+ * alignment costs one multiplication linear in the digits instead of `exp` of
+ * them — rebuilding `10^10000` one factor of ten at a time was what made a
+ * single value at scale 10 000 cost seconds across a list.
+ */
 export function pow10BigInt(exp: number): bigint {
-	let acc = 1n;
-	for (let i = 0; i < exp; i++) acc *= 10n;
-	return acc;
+	if (!Number.isSafeInteger(exp) || exp < 0) {
+		throw new Error(`Invalid exponent: ${exp}`);
+	}
+	const rung = Math.floor(exp / LADDER_STEP);
+	if (rung > LADDER_RUNGS) return 10n ** BigInt(exp);
+	let high = ladder[rung];
+	if (high === undefined) {
+		high = 10n ** BigInt(rung * LADDER_STEP);
+		ladder[rung] = high;
+	}
+	const rest = exp % LADDER_STEP;
+	return rest === 0 ? high : high * 10n ** BigInt(rest);
+}
+
+/**
+ * Add up integers grouped by scale, then raise each group once to the
+ * largest scale — exact, because nothing is rounded to the common scale.
+ *
+ * Raising every member on its own made one value at scale 10 000 cost a
+ * 10 000-digit multiplication for each of the others; grouped, a list costs
+ * its length plus one multiplication per distinct scale.
+ */
+function sumByScale(groups: Map<number, bigint>): string {
+	let scale = 0;
+	for (const groupScale of groups.keys()) {
+		if (groupScale > scale) scale = groupScale;
+	}
+	let total = 0n;
+	for (const [groupScale, int] of groups) {
+		total += int * pow10BigInt(scale - groupScale);
+	}
+	return formatDecimal(total, scale);
+}
+
+/** Pure-TS `sum` — the Rust `sum` contract: the exact total, `0` when empty. */
+export function sumTs(values: readonly string[]): string {
+	const groups = new Map<number, bigint>();
+	for (const value of values) {
+		const parsed = parseDecimal(value);
+		groups.set(parsed.scale, (groups.get(parsed.scale) ?? 0n) + parsed.int);
+	}
+	return sumByScale(groups);
+}
+
+/** Pure-TS `dot` — `Σ aᵢ·bᵢ`, exact, refusing lists of different lengths. */
+export function dotTs(a: readonly string[], b: readonly string[]): string {
+	if (a.length !== b.length) {
+		throw new Error(`Mismatched batch lengths: ${a.length} and ${b.length}`);
+	}
+	const groups = new Map<number, bigint>();
+	for (const [index, left] of a.entries()) {
+		const right = b[index];
+		if (right === undefined) {
+			throw new Error(`Mismatched batch lengths: ${a.length} and ${b.length}`);
+		}
+		const da = parseDecimal(left);
+		const db = parseDecimal(right);
+		const scale = da.scale + db.scale;
+		groups.set(scale, (groups.get(scale) ?? 0n) + da.int * db.int);
+	}
+	return sumByScale(groups);
 }
 
 /**

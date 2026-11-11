@@ -1,6 +1,8 @@
 use num_bigint::BigInt;
 use num_traits::{Signed, Zero};
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
+use std::sync::OnceLock;
 
 /// The most fractional digits a precision or a scale may ask for — kept in
 /// step with `MAX_SCALE` in `src/math.ts`.
@@ -101,7 +103,36 @@ pub fn sub(a: &str, b: &str) -> Result<String, String> {
 pub fn mul(a: &str, b: &str) -> Result<String, String> {
     let da = parse_decimal(a)?;
     let db = parse_decimal(b)?;
-    Ok(format_decimal(da.int * db.int, da.scale + db.scale))
+    let scale = product_scale(&da, &db)?;
+    Ok(format_decimal(da.int * db.int, scale))
+}
+
+/// The scale a product is worked at.
+///
+/// Not refused past [`MAX_SCALE`]: `5e-5000 · 2e-5001` works at 10 001 digits
+/// and is `1e-10000`, which fits. Whether the canonical result fits is the
+/// caller's check, on the result.
+fn product_scale(a: &Decimal, b: &Decimal) -> Result<u32, String> {
+    a.scale
+        .checked_add(b.scale)
+        .ok_or_else(|| "Invalid scale: a product's scale overflows".to_string())
+}
+
+/// Add up integers grouped by scale, then raise each group once to the
+/// largest scale.
+///
+/// Raising every member on its own made one value at scale 10 000 cost a
+/// 10 000-digit multiplication for each of the others; grouped, a list costs
+/// its length plus one multiplication per distinct scale.
+fn sum_by_scale(groups: BTreeMap<u32, BigInt>) -> String {
+    let scale = groups.keys().next_back().copied().unwrap_or(0);
+    let mut total = BigInt::zero();
+    for (group_scale, int) in groups {
+        // Raised to the common scale rather than rounded to it: every value
+        // keeps every digit it came with, which is what makes this exact.
+        total += int * pow10(scale - group_scale);
+    }
+    format_decimal(total, scale)
 }
 
 /// Sum a whole batch in ONE crossing of the boundary.
@@ -117,19 +148,12 @@ pub fn mul(a: &str, b: &str) -> Result<String, String> {
 /// An empty batch is `0`: the additive identity, and the only answer that
 /// keeps `sum(a) + sum(b) == sum(a ++ b)` true when one side is empty.
 pub fn sum(values: &[String]) -> Result<String, String> {
-    let parsed = values
-        .iter()
-        .map(|value| parse_decimal(value))
-        .collect::<Result<Vec<Decimal>, String>>()?;
-
-    let scale = parsed.iter().map(|d| d.scale).max().unwrap_or(0);
-    let mut total = BigInt::zero();
-    for decimal in &parsed {
-        // Raised to the common scale rather than rounded to it: every value
-        // keeps every digit it came with, which is what makes this exact.
-        total += &decimal.int * pow10(scale - decimal.scale);
+    let mut groups: BTreeMap<u32, BigInt> = BTreeMap::new();
+    for value in values {
+        let decimal = parse_decimal(value)?;
+        *groups.entry(decimal.scale).or_default() += decimal.int;
     }
-    Ok(format_decimal(total, scale))
+    Ok(sum_by_scale(groups))
 }
 
 /// The sum of pairwise products — `Σ aᵢ·bᵢ` — in one crossing.
@@ -152,22 +176,14 @@ pub fn dot(a: &[String], b: &[String]) -> Result<String, String> {
         ));
     }
 
-    let mut products: Vec<Decimal> = Vec::with_capacity(a.len());
+    let mut groups: BTreeMap<u32, BigInt> = BTreeMap::new();
     for (left, right) in a.iter().zip(b.iter()) {
         let da = parse_decimal(left)?;
         let db = parse_decimal(right)?;
-        products.push(Decimal {
-            int: da.int * db.int,
-            scale: da.scale + db.scale,
-        });
+        let scale = product_scale(&da, &db)?;
+        *groups.entry(scale).or_default() += da.int * db.int;
     }
-
-    let scale = products.iter().map(|d| d.scale).max().unwrap_or(0);
-    let mut total = BigInt::zero();
-    for product in &products {
-        total += &product.int * pow10(scale - product.scale);
-    }
-    Ok(format_decimal(total, scale))
+    Ok(sum_by_scale(groups))
 }
 
 /// `a / b` at `precision` fractional digits, rounded once from the exact
@@ -399,10 +415,8 @@ pub(crate) fn parse_decimal(input: &str) -> Result<Decimal, String> {
         int = -int;
     }
 
-    Ok(Decimal {
-        int,
-        scale: frac.len() as u32,
-    })
+    let scale = u32::try_from(frac.len()).map_err(|_| format!("Invalid scale: {}", frac.len()))?;
+    Ok(Decimal { int, scale })
 }
 
 fn align_scale(a: &Decimal, b: &Decimal) -> (BigInt, BigInt, u32) {
@@ -451,17 +465,61 @@ pub(crate) fn format_decimal(int: BigInt, scale: u32) -> String {
     out
 }
 
+/// The distance between two rungs of the power-of-ten ladder.
+const LADDER_STEP: u32 = 100;
+
+/// Rungs up to twice the largest scale: a product is worked at the sum of two
+/// scales, and a square root's radicand at twice its precision.
+const LADDER_RUNGS: usize = (2 * MAX_SCALE / LADDER_STEP) as usize + 1;
+
+/// `10^(100·k)`, each built the first time it is asked for. Every rung kept
+/// is under a megabyte all together, which is what bounds the cache.
+static LADDER: [OnceLock<BigInt>; LADDER_RUNGS] = [const { OnceLock::new() }; LADDER_RUNGS];
+
+/// `10^exp`.
+///
+/// Built from the ladder's rung below `exp` and one small power, so a scale
+/// alignment costs one multiplication linear in the digits instead of `exp`
+/// of them — rebuilding `10^10000` one factor of ten at a time was what made
+/// a single value at scale 10 000 cost seconds across a list.
 pub(crate) fn pow10(exp: u32) -> BigInt {
-    let mut acc = BigInt::from(1u32);
-    for _ in 0..exp {
-        acc *= 10u32;
-    }
-    acc
+    let ten = BigInt::from(10u32);
+    let rung = exp / LADDER_STEP;
+    let rest = ten.pow(exp % LADDER_STEP);
+    let Some(slot) = usize::try_from(rung).ok().and_then(|rung| LADDER.get(rung)) else {
+        return ten.pow(exp);
+    };
+    let high = slot.get_or_init(|| ten.pow(rung * LADDER_STEP));
+    high * rest
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pow10_is_exact_on_and_between_the_ladder_rungs() {
+        let ten = BigInt::from(10u32);
+        for exp in [
+            0, 1, 99, 100, 101, 250, 9_999, 10_000, 19_999, 20_000, 20_100, 20_101, 25_000,
+        ] {
+            assert_eq!(pow10(exp), ten.pow(exp), "10^{exp}");
+        }
+    }
+
+    #[test]
+    fn sum_and_dot_group_mixed_scales_exactly() {
+        let mut values = strings(&["1", "0.5", "-0.25", "2"]);
+        values.push(format!("0.{}1", "0".repeat(9_999)));
+        assert_eq!(sum(&values).unwrap(), format!("3.25{}1", "0".repeat(9_997)));
+        let left = strings(&["2", "0.5", "1.25"]);
+        let right = strings(&["3", "0.2", "-4"]);
+        assert_eq!(dot(&left, &right).unwrap(), "1.1");
+        // Worked at 10 001 digits, but the product fits.
+        let a = format!("0.{}5", "0".repeat(4_999));
+        let b = format!("0.{}2", "0".repeat(5_000));
+        assert_eq!(mul(&a, &b).unwrap(), format!("0.{}1", "0".repeat(9_999)));
+    }
 
     #[test]
     fn add_and_sub_work() {

@@ -10,6 +10,7 @@ import {
 	assertRoundMode,
 	cmpTs,
 	divTs,
+	dotTs,
 	formatDecimal,
 	MAX_SCALE,
 	modTs,
@@ -22,6 +23,7 @@ import {
 	roundSqrtInt,
 	sqrtTs,
 	subTs,
+	sumTs,
 } from "./math.js";
 import { tryNativeAtom } from "./native.js";
 
@@ -163,10 +165,7 @@ export class Decimal {
 	static sum(values: Iterable<DecimalInput>): Decimal {
 		const parts = [...values].map(normalizeInput);
 		const native = tryNativeAtom();
-		if (native) return new Decimal(native.sum(parts));
-		// The fallback folds, because the TypeScript engine has no boundary to
-		// cross and therefore nothing to save by batching.
-		return new Decimal(parts.reduce((total, part) => addTs(total, part), "0"));
+		return new Decimal(native ? native.sum(parts) : sumTs(parts));
 	}
 
 	/**
@@ -189,15 +188,7 @@ export class Decimal {
 			);
 		}
 		const native = tryNativeAtom();
-		if (native) return new Decimal(native.dot(left, right));
-		return new Decimal(
-			// The lengths were checked above, so every read lands.
-			left.reduce(
-				(total, value, index) =>
-					addTs(total, mulTs(value, right[index] ?? "0")),
-				"0",
-			),
-		);
+		return new Decimal(native ? native.dot(left, right) : dotTs(left, right));
 	}
 
 	static zero(): Decimal {
