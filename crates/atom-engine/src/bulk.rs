@@ -31,7 +31,7 @@
 //! executor, which has no ceiling — so the fast path is never the reason an
 //! answer is wrong, only the reason it was quick.
 
-use crate::engine::{format_decimal, pow10, RoundMode, MAX_SCALE};
+use crate::engine::{format_decimal, RoundMode, MAX_SCALE};
 use num_bigint::BigInt;
 use std::cmp::Ordering;
 
@@ -821,15 +821,10 @@ pub fn run(values: &[i64], rows: usize, program: &[i32]) -> Outcome<Vec<String>>
     Ok(machine.out)
 }
 
-/// `10^exp` as a `BigInt`, for callers that need the same ladder this module
-/// uses internally.
-pub fn scale_factor(exp: u32) -> BigInt {
-    pow10(exp)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::pow10;
 
     /// `[opcode, dst, a, b, imm0, imm1]`, flattened.
     fn program(words: &[[i32; INSTRUCTION_WIDTH]]) -> Vec<i32> {
