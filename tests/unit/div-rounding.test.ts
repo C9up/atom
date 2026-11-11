@@ -5,6 +5,7 @@ import {
 	type BulkScalar,
 	configureAtomContext,
 	Decimal,
+	Money,
 	type RoundMode,
 	resetAtomContext,
 	withAtomContext,
@@ -176,6 +177,36 @@ describe("Decimal.div — rounded once, in the mode asked for", () => {
 		expect(() =>
 			Reflect.apply(Decimal.prototype.div, exact, ["1", { mode: "bogus" }]),
 		).toThrow(/Unknown rounding mode/);
+	});
+
+	it("refuses an unknown mode wherever one is taken, before it is needed", () => {
+		// Each of these lands exactly, so the mode is never read: unchecked,
+		// the typo passed here and threw on the first value that needed it.
+		const bogus = { exact: false, mode: "bogus" };
+		expect(() =>
+			Reflect.apply(Decimal.prototype.toMinorUnits, new Decimal("1.23"), [
+				2,
+				bogus,
+			]),
+		).toThrow(/Unknown rounding mode: bogus/);
+		expect(() =>
+			Reflect.apply(Decimal.prototype.toMinorUnits, new Decimal("1.23"), [
+				2,
+				{ mode: "bogus" },
+			]),
+		).toThrow(/Unknown rounding mode: bogus/);
+		expect(() =>
+			Reflect.apply(Decimal.prototype.quantize, new Decimal("1.25"), [
+				"0.05",
+				{ mode: "bogus" },
+			]),
+		).toThrow(/Unknown rounding mode: bogus/);
+		expect(() =>
+			Reflect.construct(Money, ["1.00", "EUR", { mode: "bogus" }]),
+		).toThrow(/Unknown rounding mode: bogus/);
+		expect(
+			new Decimal("1.234").toMinorUnits(2, { exact: false, mode: "ceil" }),
+		).toBe(124n);
 	});
 
 	it("rounds a negative power, percentages and a median the same way", () => {

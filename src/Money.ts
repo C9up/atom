@@ -1,5 +1,6 @@
 import { defaultQuantizeMode } from "./context.js";
 import { Decimal, type DecimalInput, type RoundMode } from "./Decimal.js";
+import { assertRoundMode } from "./math.js";
 
 export interface MoneyOptions {
 	scale?: number;
@@ -85,7 +86,8 @@ export class Money {
 	) {
 		this.#currency = normalizeCurrency(currency);
 		this.#scale = options.scale ?? ISO_MINOR_UNITS[this.#currency] ?? 2;
-		const mode = options.mode ?? defaultQuantizeMode();
+		// Checked even when `exact` leaves it unread, so a typo fails here.
+		const mode = assertRoundMode(options.mode ?? defaultQuantizeMode());
 		const exact = options.exact ?? true;
 		const decimal = new Decimal(amount);
 		this.#amount = exact

@@ -409,7 +409,7 @@ export class Decimal {
 	 *     new Decimal('1.025').quantize('0.05')  // → Decimal('1.05')
 	 */
 	quantize(step: DecimalInput, options: QuantizeOptions = {}): Decimal {
-		const { mode = defaultQuantizeMode() } = options;
+		const mode = assertRoundMode(options.mode ?? defaultQuantizeMode());
 		const stepValue = new Decimal(step);
 		if (!stepValue.gt(0)) {
 			throw new Error("Quantize step must be greater than zero");
@@ -476,7 +476,10 @@ export class Decimal {
 	 */
 	toMinorUnits(scale: number, options: ToMinorUnitsOptions = {}): bigint {
 		assertScale(scale);
-		const { exact = true, mode = "trunc" } = options;
+		const exact = options.exact ?? true;
+		// Checked before it is needed, like every other mode: rounding reads it
+		// only when digits are dropped, so a typo would pass every exact value.
+		const mode = assertRoundMode(options.mode ?? "trunc");
 		const parsed = parseDecimal(this.#value);
 		if (parsed.scale === scale) return parsed.int;
 		if (parsed.scale < scale) {
