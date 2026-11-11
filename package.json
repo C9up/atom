@@ -26,10 +26,10 @@
     "test:rust": "cargo test -p atom-engine",
     "test:napi": "node scripts/verify-napi.mjs",
     "bench": "pnpm build && node scripts/bench.mjs",
-    "build:wasm": "wasm-pack build --target web crates/atom-engine-wasm --out-dir ../../wasm && node scripts/clean-wasm-pack-meta.mjs",
+    "build:wasm": "node scripts/build-wasm.mjs",
     "lint": "biome check src/ tests/",
     "test:coverage": "vitest run --coverage",
-    "prepublishOnly": "tsc -p tsconfig.build.json && pnpm build:wasm && node scripts/verify-wasm.mjs",
+    "prepublishOnly": "tsc -p tsconfig.build.json && node scripts/verify-wasm.mjs",
     "bench:bulk": "pnpm build && node scripts/bench-bulk.mjs"
   },
   "files": [

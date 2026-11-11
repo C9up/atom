@@ -3,8 +3,10 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-// Publish-time gate: the `wasm-pack build --target web` output (JS glue + the
-// binary) MUST be in the package. Without it the browser loader
+// Publish-time gate: the `pnpm build:wasm` output (the wasm-bindgen
+// `--target web` JS glue + the binary) MUST be in the package. CI builds it in
+// its own job and hands it to the publish job as an artefact; prepublishOnly
+// only checks it, so a publish never builds the binary it ships. Without it the browser loader
 // (src/native.ts) throws ATOM_ENGINE_NOT_FOUND at runtime — exactly the
 // "stub-only tarball" failure this gate exists to prevent. Only the hand-written
 // `atom_engine_wasm.d.ts` typecheck stub is committed; the .js/.wasm are built.
@@ -17,7 +19,7 @@ for (const name of required) {
   const p = join(wasmDir, name)
   if (!existsSync(p)) {
     throw new Error(
-      `[atom:wasm] missing build artifact: wasm/${name} — run \`pnpm build:wasm\` (wasm-pack) before publishing`,
+      `[atom:wasm] missing build artifact: wasm/${name} — run \`pnpm build:wasm\` before publishing`,
     )
   }
   if (statSync(p).size === 0) {
@@ -74,10 +76,10 @@ if (wasm.cmp('1.20', '1.2') !== 0) {
 }
 
 // Present on disk is NOT the same question as present in the package, and it is
-// the weaker one. `wasm-pack` writes a `.gitignore` of `*` into its out-dir, and
-// npm honours a .gitignore nested inside a published directory even when `files`
-// lists that directory — so every check above, smoke tests included, can pass
-// while the tarball ships nothing. That is exactly how 0.1.12 went out.
+// the weaker one. npm honours a .gitignore nested inside a published directory
+// even when `files` lists that directory — so every check above, smoke tests
+// included, can pass while the tarball ships nothing. That is exactly how
+// 0.1.12 went out, when the build tool wrote a `.gitignore` of `*` into wasm/.
 //
 // So ask the packer. `--ignore-scripts` keeps this from re-entering
 // prepublishOnly, which is what invoked us.
@@ -95,7 +97,7 @@ for (const name of required) {
     throw new Error(
       `[atom:wasm] wasm/${name} is on disk but NOT in the tarball — something is excluding it ` +
         `(a .gitignore or .npmignore nested in wasm/ will do this even though "wasm" is in package.json files). ` +
-        `Run \`node scripts/clean-wasm-pack-meta.mjs\` after wasm-pack.`,
+        `Remove it and pack again.`,
     )
   }
 }

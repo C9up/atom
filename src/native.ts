@@ -2,7 +2,7 @@
  * Universal engine loader — auto-detects Node (NAPI) vs Browser (WASM).
  *
  * - **Node**: loads the prebuilt `.node` binary via `createRequire` (sync, fast)
- * - **Browser**: loads the `.wasm` binary via the wasm-pack JS glue (async init on
+ * - **Browser**: loads the `.wasm` binary via the wasm-bindgen JS glue (async init on
  *   first module import via top-level await, then sync function calls)
  *
  * The Decimal facade prefers this engine when available and falls back to the

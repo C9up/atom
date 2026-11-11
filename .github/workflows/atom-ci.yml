@@ -213,6 +213,48 @@ jobs:
       # gate if something runs them.
       - run: pnpm test:coverage
 
+  # The browser engine, built where it is tested and before anything holds a
+  # publish token. Two pinned steps and nothing downloaded at build time: cargo
+  # builds the wasm32 crate from Cargo.lock, and the wasm-bindgen CLI — built
+  # from crates.io at exactly the version of the wasm-bindgen crate Cargo.lock
+  # resolves, which the glue must match — writes the `--target web` glue. No
+  # wasm-pack, which fetched that CLI and a binaryen wasm-opt from GitHub
+  # releases with no digest. verify-wasm instantiates the binary, runs the
+  # engine's smoke tests in it and checks the packer ships it; the publish job
+  # downloads this artefact instead of rebuilding.
+  wasm:
+    name: WASM (build & verify)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-bindgen-cli at Cargo.lock's version
+        run: |
+          set -euo pipefail
+          version=$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/"/, "", $3); print $3 }' Cargo.lock)
+          if [ -z "$version" ]; then
+            echo "::error::wasm-bindgen not found in Cargo.lock"
+            exit 1
+          fi
+          cargo install wasm-bindgen-cli --locked --version "=$version"
+      - run: node scripts/build-wasm.mjs
+      - run: node scripts/verify-wasm.mjs
+      - name: Upload artefact
+        uses: actions/upload-artifact@v7
+        with:
+          name: atom-wasm
+          path: |
+            wasm/atom_engine_wasm.js
+            wasm/atom_engine_wasm.d.ts
+            wasm/atom_engine_wasm_bg.wasm
+            wasm/atom_engine_wasm_bg.wasm.d.ts
+          if-no-files-found: error
+
   # Publish job — gated on workflow_dispatch (manual maintainer trigger).
   # Requires NPM_TOKEN secret + a v<MAJOR>.<MINOR>.<PATCH> tag at HEAD matching
   # package.json. Drift gate refuses to overwrite a published version (or roll
@@ -224,7 +266,7 @@ jobs:
       # Creating the release needs write; the workflow default is read.
       contents: write
     timeout-minutes: 15
-    needs: [quality, build-and-test, cargo-tests, ts-tests]
+    needs: [quality, build-and-test, cargo-tests, ts-tests, wasm]
     if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v6
@@ -327,15 +369,14 @@ jobs:
           pattern: atom-napi-*
           merge-multiple: true
 
-      # Browser engine: build the WASM into the tarball. `pnpm publish` triggers
-      # prepublishOnly (`tsc && pnpm build:wasm && verify-wasm`), so the wasm
-      # toolchain must be present here — otherwise the package would ship only
-      # the .d.ts stub and break in browsers with ATOM_ENGINE_NOT_FOUND.
-      - uses: dtolnay/rust-toolchain@stable
+      # Browser engine: the binary the wasm job built and verified, not a new
+      # one. `pnpm publish` triggers prepublishOnly (`tsc && verify-wasm`),
+      # which refuses a tarball without it rather than shipping only the .d.ts
+      # stub that breaks in browsers with ATOM_ENGINE_NOT_FOUND.
+      - uses: actions/download-artifact@v7
         with:
-          targets: wasm32-unknown-unknown
-      - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
+          name: atom-wasm
+          path: wasm
 
       - run: pnpm publish --access public --no-git-checks
         env:
