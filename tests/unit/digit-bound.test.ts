@@ -53,6 +53,16 @@ function growth<T>(work: (input: T) => void, small: T, large: T): number {
 	return fastest(() => work(large)) / Math.max(base, 0.5);
 }
 
+/**
+ * How many times longer `work` takes than `reference`, for a work whose
+ * growth is inherently that of its reference: what shows is whether it does
+ * the reference's work a bounded number of times or a number proportional to
+ * the input.
+ */
+function relative(work: () => void, reference: () => void): number {
+	return fastest(work) / Math.max(fastest(reference), 0.5);
+}
+
 /** Linear work on four times the input stays near 4; anything worse fails. */
 const MAX_GROWTH = 10;
 
@@ -310,6 +320,37 @@ describe("Decimal — work that grows with the input, not with its square", () =
 			expect(() => new Decimal("5e-5000").times("3e-5001")).toThrow(
 				/Invalid scale/,
 			);
+		});
+	});
+
+	it("takes a square root in a bounded number of full-width divisions", () => {
+		// Newton started from the value itself halved its way down for about
+		// half its bit length: 1.4 s for a 20 000-digit value, 7 s at
+		// precision 10 000. Any root costs about a multiplication of its width.
+		const root = "7".repeat(10_000);
+		const square = new Decimal(root).times(root);
+		const multiply = () => new Decimal(root).times(root);
+		onBothEngines(() => {
+			expect(square.sqrt().toString()).toBe(root);
+			expect(
+				new Decimal("9".repeat(20_000))
+					.sqrt({ mode: "trunc" })
+					.trunc()
+					.toString(),
+			).toBe("9".repeat(10_000));
+			expect(new Decimal("2").sqrt({ precision: 10_000 }).toFixed(12)).toBe(
+				"1.414213562373",
+			);
+			expect(relative(() => square.sqrt(), multiply)).toBeLessThan(20);
+			expect(
+				relative(() => new Decimal("2").sqrt({ precision: 10_000 }), multiply),
+			).toBeLessThan(20);
+			expect(
+				relative(
+					() => new Decimal("9".repeat(20_000)).sqrt({ precision: 10_000 }),
+					multiply,
+				),
+			).toBeLessThan(20);
 		});
 	});
 });

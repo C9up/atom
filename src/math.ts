@@ -466,14 +466,21 @@ export function sqrtRoundedTs(
 	return formatDecimal(roundSqrtInt(a, truncated, precision, mode), precision);
 }
 
+/**
+ * Newton's iteration from `2^⌈bits/2⌉`, a power of two at or above the root.
+ * Started from `value` itself it first halved its way down for about `bits/2`
+ * steps, each a full-width division: seconds on a 20 000-digit value. From an
+ * upper bound within a factor of two it converges in `O(log bits)` steps.
+ */
 function bigintSqrt(value: bigint): bigint {
 	if (value < 0n) throw new Error("Cannot compute sqrt of negative bigint");
 	if (value < 2n) return value;
-	let x0 = value;
-	let x1 = (x0 + value / x0) / 2n;
+	const bits = value.toString(2).length;
+	let x0 = 1n << BigInt(Math.ceil(bits / 2));
+	let x1 = (x0 + value / x0) >> 1n;
 	while (x1 < x0) {
 		x0 = x1;
-		x1 = (x0 + value / x0) / 2n;
+		x1 = (x0 + value / x0) >> 1n;
 	}
 	return x0;
 }

@@ -189,26 +189,10 @@ fn precision_of(imm0: i32) -> Outcome<u32> {
         .ok_or_else(|| BulkError::BadProgram(format!("invalid precision {imm0}")))
 }
 
-/// Integer square root by Newton's method, truncated toward zero.
-///
-/// Worked in `u128`: starting the iteration from `value` itself, the first
-/// `guess + value / guess` is `value + 1`, which exceeds `i128::MAX` for the
-/// widest input.
+/// Integer square root, truncated toward zero; `0` for a negative value,
+/// which the callers never pass.
 fn isqrt(value: i128) -> i128 {
-    let Ok(value) = u128::try_from(value) else {
-        return 0;
-    };
-    if value < 2 {
-        return value as i128;
-    }
-    let mut guess = value;
-    let mut next = (guess + value / guess) / 2;
-    while next < guess {
-        guess = next;
-        next = (guess + value / guess) / 2;
-    }
-    // The root of anything below 2^127 is below 2^64.
-    guess as i128
+    value.checked_isqrt().unwrap_or(0)
 }
 
 /// `√source` at `precision` digits, rounded in `mode` — what `Decimal.sqrt`

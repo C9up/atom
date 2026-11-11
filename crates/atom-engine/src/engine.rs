@@ -339,29 +339,23 @@ pub fn sqrt(a: &str, precision: u32) -> Result<String, String> {
     // Shift the radicand so that taking its integer square root yields a
     // result with `precision` fractional digits. This is the same identity
     // used in the TS fallback: `floor(sqrt(int * 10^(2*target - scale)))`.
-    let factor_exp: i64 = 2 * precision as i64 - parsed.scale as i64;
-    let radicand = if factor_exp >= 0 {
-        parsed.int * pow10(factor_exp as u32)
+    let doubled = 2 * precision;
+    let radicand = if doubled >= parsed.scale {
+        parsed.int * pow10(doubled - parsed.scale)
     } else {
-        parsed.int / pow10((-factor_exp) as u32)
+        parsed.int / pow10(parsed.scale - doubled)
     };
 
-    let root = bigint_sqrt(radicand);
-    Ok(format_decimal(root, precision))
-}
-
-/// Integer square root via Newton's method on `BigInt`. Panics on negative.
-fn bigint_sqrt(value: BigInt) -> BigInt {
-    if value < BigInt::from(2) {
-        return value;
-    }
-    let mut x0 = value.clone();
-    let mut x1 = (&x0 + &value / &x0) / BigInt::from(2);
-    while x1 < x0 {
-        x0 = x1.clone();
-        x1 = (&x0 + &value / &x0) / BigInt::from(2);
-    }
-    x0
+    // num-bigint's root starts Newton from a floating-point estimate, so it
+    // converges in `O(log bits)` steps; the hand-written iteration started
+    // from the radicand itself and took about `bits/2` full-width divisions,
+    // seconds on a 20 000-digit value. Through `BigUint` so a negative
+    // radicand is an error rather than a panic.
+    let root = radicand
+        .to_biguint()
+        .ok_or_else(|| "Cannot compute sqrt of a negative decimal".to_string())?
+        .sqrt();
+    Ok(format_decimal(BigInt::from(root), precision))
 }
 
 pub fn cmp(a: &str, b: &str) -> Result<i32, String> {
@@ -662,6 +656,17 @@ mod tests {
         assert_eq!(sqrt("2", 6).unwrap(), "1.414213");
         assert_eq!(sqrt("0", 6).unwrap(), "0");
         assert!(sqrt("-1", 6).is_err());
+    }
+
+    #[test]
+    fn sqrt_of_a_wide_square_is_exact() {
+        let root = "7".repeat(10_000);
+        let square = mul(&root, &root).unwrap();
+        assert_eq!(sqrt(&square, 0).unwrap(), root);
+        assert_eq!(sqrt(&format!("{square}.5"), 0).unwrap(), root);
+        assert!(sqrt("2", MAX_SCALE)
+            .unwrap()
+            .starts_with("1.41421356237309504880"));
     }
 
     /// The batch API must agree with the pairwise one, digit for digit —
