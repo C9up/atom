@@ -167,8 +167,12 @@ export function formatDecimal(int: bigint, scale: number): string {
 
 	const split = s.length - scale;
 	const whole = s.slice(0, split);
-	let frac = s.slice(split);
-	frac = frac.replace(/0+$/, "");
+	// A backwards scan, not `/0+$/`: the regex retries from every zero of a
+	// run that ends in another digit, so `0.<9 999 zeros>1` cost tens of
+	// milliseconds a value.
+	let end = s.length;
+	while (end > split && s.charCodeAt(end - 1) === 48) end--;
+	const frac = s.slice(split, end);
 
 	let out = frac ? `${whole}.${frac}` : whole;
 	if (negative && out !== "0") out = `-${out}`;

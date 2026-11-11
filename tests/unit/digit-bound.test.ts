@@ -231,3 +231,19 @@ describe("Atom.bulk — the same bound", () => {
 		});
 	});
 });
+
+describe("Decimal — work that grows with the input, not with its square", () => {
+	it("normalises a long run of fractional zeros in time linear in its length", () => {
+		// Eight bytes of JSON expand to `0.<9 999 zeros>1`, and every value is
+		// normalised on the way in: a trailing-zero strip that retried from
+		// each zero of the run cost tens of milliseconds a value.
+		const normalise = (zeros: number) => {
+			for (let i = 0; i < 20; i++) {
+				expect(new Decimal(`1e-${zeros}`).toParts().scale).toBe(zeros);
+			}
+		};
+		onBothEngines(() => {
+			expect(growth(normalise, 2_500, 10_000)).toBeLessThan(MAX_GROWTH);
+		});
+	});
+});
