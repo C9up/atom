@@ -10,6 +10,7 @@ use atom_engine::bulk;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::OnceLock;
 
 /// Run a bulk program over a resident column buffer.
 ///
@@ -23,7 +24,25 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 /// allowed to be too narrow, never to be wrong.
 #[napi]
 pub fn run_bulk(values: BigInt64Array, rows: u32, program: Int32Array) -> Result<Vec<String>> {
-    guarded(|| bulk::run(&values, rows as usize, &program))
+    guarded(|| {
+        if panic_probe() {
+            panic!("forced by ATOM_BULK_PANIC_PROBE");
+        }
+        bulk::run(&values, rows as usize, &program)
+    })
+}
+
+/// Test-only injection point: with `ATOM_BULK_PANIC_PROBE=1` in the
+/// environment at the first call, every `run_bulk` panics inside the guard.
+/// The bulk engine has no input left that panics, so this is the one way a
+/// test can prove, through the generated N-API wrapper and a real Node
+/// process, that a panic surfaces as a thrown error rather than an abort
+/// (exit 134). Read once per process; the most it can do is make a call
+/// throw, which any caller can already cause with a malformed program.
+fn panic_probe() -> bool {
+    static PROBE: OnceLock<bool> = OnceLock::new();
+    *PROBE
+        .get_or_init(|| std::env::var_os("ATOM_BULK_PANIC_PROBE").is_some_and(|value| value == "1"))
 }
 
 /// A panic becomes a thrown error here: a plain `#[napi]` function does not
