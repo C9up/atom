@@ -11,12 +11,13 @@
  * Usage:
  *
  *     import { Column, Entity, BaseEntity, PrimaryKey } from '@c9up/atlas'
+ *     import type { Decimal } from '@c9up/atom'
  *     import { decimalAtlasAdapter } from '@c9up/atom/atlas'
  *
  *     @Entity('accounts')
  *     class Account extends BaseEntity {
- *       @PrimaryKey() id!: number
- *       @Column(decimalAtlasAdapter) balance!: Decimal | null
+ *       @PrimaryKey() declare id: number
+ *       @Column(decimalAtlasAdapter) declare balance: Decimal | null
  *     }
  */
 
