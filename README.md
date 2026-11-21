@@ -121,6 +121,18 @@ plan has been run. Arithmetic is checked against a 128-bit width, and anything
 too wide re-runs on the BigInt executor, so the fast path can be too narrow but
 never wrong.
 
+`bulk.runAsync(outputs)` is `run` off the JS thread where the engine can do
+that: on a phone, the JSI module computes the plan on a worker thread.
+
+## On a phone
+
+atom loads in a React Native app (Hermes) through its JSI module: a C ABI crate
+over the Rust engine (`crates/atom-ffi`) and a C++ TurboModule
+(`android/src/main/cpp/NativeAtom.cpp`), declared in `reamNative` so
+`ream android:*` builds and links them. React Native's bundler takes
+`native.rn` in place of `native` (the `react-native` field). Without the
+module, the TypeScript engine answers, as everywhere else.
+
 ## Atlas
 
 ```ts

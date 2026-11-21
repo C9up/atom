@@ -102,6 +102,22 @@ export function tryNativeAtom(): NativeAtom | undefined {
 	return native;
 }
 
+/**
+ * The engine's asynchronous variants, computed off the JS thread. Only the
+ * phone's JSI module has them (native.rn.ts); N-API and WASM do not.
+ */
+export interface NativeAtomAsync {
+	runBulk(
+		values: BigInt64Array,
+		rows: number,
+		program: Int32Array,
+	): Promise<string[]>;
+}
+
+export function tryNativeAtomAsync(): NativeAtomAsync | undefined {
+	return undefined;
+}
+
 // Test override (unchanged from before)
 let overrideNative: NativeAtom | null | undefined;
 

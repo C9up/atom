@@ -4,6 +4,7 @@ members = [
   "crates/atom-engine",
   "crates/atom-engine-napi",
   "crates/atom-engine-wasm",
+  "crates/atom-ffi",
 ]
 
 [workspace.package]

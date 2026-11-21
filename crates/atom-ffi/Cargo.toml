@@ -1,0 +1,13 @@
+[package]
+name = "atom-ffi"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "C ABI over atom-engine, for the JSI module a phone loads atom through"
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+atom-engine = { path = "../atom-engine" }

@@ -45,7 +45,7 @@ import {
 	sqrtRoundedTs,
 	subTs,
 } from "./math.js";
-import { tryNativeAtom } from "./native.js";
+import { tryNativeAtom, tryNativeAtomAsync } from "./native.js";
 
 const INSTRUCTION_WIDTH = 6;
 const COLUMN_REGISTERS = 16;
@@ -123,8 +123,21 @@ interface PlanNode {
 /** Distinguishes one compilation's marks from the last one's. */
 let compilation = 0;
 
+/**
+ * The node behind each public handle; only this module reads it. A WeakMap
+ * rather than a private field read through a static block: React Native's
+ * Babel preset does not transform static blocks, and atom loads there too.
+ */
+const nodes = new WeakMap<BulkValue, PlanNode>();
+
 /** Reads the node behind a public handle. Only this module may. */
-let nodeOf: (value: BulkValue) => PlanNode;
+function nodeOf(value: BulkValue): PlanNode {
+	const node = nodes.get(value);
+	if (node === undefined) {
+		throw new Error("[ATOM_BULK_BAD_OUTPUT] not a planned value");
+	}
+	return node;
+}
 
 /**
  * A value that has been planned but not computed.
@@ -133,14 +146,8 @@ let nodeOf: (value: BulkValue) => PlanNode;
  * into bulk should be a change of where the value comes from and nothing else.
  */
 abstract class BulkValue {
-	readonly #node: PlanNode;
-
 	protected constructor(node: PlanNode) {
-		this.#node = node;
-	}
-
-	static {
-		nodeOf = (value: BulkValue) => value.#node;
+		nodes.set(this, node);
 	}
 
 	/**
@@ -628,33 +635,39 @@ export class Bulk {
 	run<T extends Readonly<Record<string, BulkScalar>>>(
 		outputs: T,
 	): { [K in keyof T]: Decimal } {
-		const keys = Object.keys(outputs);
-		if (keys.length === 0) {
-			throw new Error("[ATOM_BULK_NO_OUTPUT] run() needs a value to compute");
-		}
-		const roots = keys.map((key) => {
-			const value = outputs[key];
-			if (!(value instanceof BulkScalar)) {
-				throw new Error(
-					`[ATOM_BULK_BAD_OUTPUT] "${key}" is not a planned value`,
-				);
-			}
-			return nodeOf(value);
-		});
+		return collect(outputs, this.#execute(rootsOf(outputs)));
+	}
 
-		const results = this.#execute(roots);
-		const out: Record<string, Decimal> = {};
-		keys.forEach((key, index) => {
-			const value = results[index];
-			if (value === undefined) {
-				throw new Error("[ATOM_BULK_LOST_OUTPUT] The run lost a value");
+	/**
+	 * `run`, off the JS thread where the engine can do that — on a phone, the
+	 * JSI module computes the plan on a worker thread, so a long one does not
+	 * freeze the screen. Elsewhere it is `run`, answered asynchronously. The
+	 * results are the same.
+	 */
+	async runAsync<T extends Readonly<Record<string, BulkScalar>>>(
+		outputs: T,
+	): Promise<{ [K in keyof T]: Decimal }> {
+		const roots = rootsOf(outputs);
+		const engine = tryNativeAtomAsync();
+		if (engine !== undefined) {
+			const rows = this.#rows ?? 0;
+			const compiled = compile(roots, rows);
+			if (compiled !== undefined) {
+				try {
+					return collect(
+						outputs,
+						await engine.runBulk(compiled.values, rows, compiled.program),
+					);
+				} catch (error) {
+					if (!isOverflow(error)) throw error;
+					return collect(
+						outputs,
+						roots.map((root) => evaluateScalar(root, new Map())),
+					);
+				}
 			}
-			out[key] = new Decimal(value);
-		});
-		if (!holdsEveryOutput(out, outputs)) {
-			throw new Error("[ATOM_BULK_LOST_OUTPUT] The run lost a value");
 		}
-		return out;
+		return this.run(outputs);
 	}
 
 	#execute(roots: readonly PlanNode[]): string[] {
@@ -675,6 +688,40 @@ export class Bulk {
 		}
 		return roots.map((root) => evaluateScalar(root, new Map()));
 	}
+}
+
+/** The plan nodes `outputs` asks for, in key order; anything else is refused. */
+function rootsOf(outputs: Readonly<Record<string, unknown>>): PlanNode[] {
+	const keys = Object.keys(outputs);
+	if (keys.length === 0) {
+		throw new Error("[ATOM_BULK_NO_OUTPUT] run() needs a value to compute");
+	}
+	return keys.map((key) => {
+		const value = outputs[key];
+		if (!(value instanceof BulkScalar)) {
+			throw new Error(`[ATOM_BULK_BAD_OUTPUT] "${key}" is not a planned value`);
+		}
+		return nodeOf(value);
+	});
+}
+
+/** The computed values under `outputs`' keys. */
+function collect<T extends Readonly<Record<string, BulkScalar>>>(
+	outputs: T,
+	results: readonly string[],
+): { [K in keyof T]: Decimal } {
+	const out: Record<string, Decimal> = {};
+	Object.keys(outputs).forEach((key, index) => {
+		const value = results[index];
+		if (value === undefined) {
+			throw new Error("[ATOM_BULK_LOST_OUTPUT] The run lost a value");
+		}
+		out[key] = new Decimal(value);
+	});
+	if (!holdsEveryOutput(out, outputs)) {
+		throw new Error("[ATOM_BULK_LOST_OUTPUT] The run lost a value");
+	}
+	return out;
 }
 
 /**

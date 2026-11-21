@@ -16,6 +16,10 @@
       "import": "./src/atlas.ts"
     }
   },
+  "react-native": {
+    "./src/native.ts": "./src/native.rn.ts",
+    "./dist/native.js": "./dist/native.rn.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
@@ -38,7 +42,21 @@
     "dist",
     "index.*.node",
     "src",
-    "wasm"
+    "wasm",
+    "Cargo.toml",
+    "Cargo.lock",
+    "crates/atom-engine/Cargo.toml",
+    "crates/atom-engine/src",
+    "crates/atom-engine-napi/Cargo.toml",
+    "crates/atom-engine-napi/src",
+    "crates/atom-engine-wasm/Cargo.toml",
+    "crates/atom-engine-wasm/src",
+    "crates/atom-ffi/Cargo.toml",
+    "crates/atom-ffi/src",
+    "crates/atom-engine-napi/build.rs",
+    "android/atom.cmake",
+    "android/src",
+    "specs"
   ],
   "devDependencies": {
     "@biomejs/biome": "^2.5.12",
@@ -76,5 +94,26 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/C9up/atom.git"
+  },
+  "reamNative": {
+    "specs": "specs",
+    "rust": [
+      {
+        "manifest": "crates/atom-ffi/Cargo.toml",
+        "lib": "atom_ffi"
+      }
+    ],
+    "android": {
+      "cmake": {
+        "file": "android/atom.cmake",
+        "link": "atom_link"
+      },
+      "cxxModules": [
+        {
+          "name": "NativeAtom",
+          "header": "NativeAtom.h"
+        }
+      ]
+    }
   }
 }
