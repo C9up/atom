@@ -68,6 +68,35 @@ describe("atom on a phone", () => {
 		expect(native.cmp("2", "10")).toBe(-1);
 	});
 
+	it("hands every operation to the module, as N-API answers it", async () => {
+		const rn = await loadRn(() => jsiModule([]));
+		const native = rn.nativeAtom();
+		expect(native.sub("0.3", "0.1")).toBe(engine.sub("0.3", "0.1"));
+		expect(native.mul("1.5", "-2")).toBe(engine.mul("1.5", "-2"));
+		expect(native.rem("10", "3")).toBe(engine.rem("10", "3"));
+		expect(native.pow("1.1", 3, 10, "half-even")).toBe(
+			engine.pow("1.1", 3, 10, "half-even"),
+		);
+		expect(native.sqrt("2", 12)).toBe(engine.sqrt("2", 12));
+		expect(native.dot(["1.5", "2"], ["2", "3"])).toBe(
+			engine.dot(["1.5", "2"], ["2", "3"]),
+		);
+	});
+
+	it("lets a test stand in for the module, or take it away", async () => {
+		const rn = await loadRn(() => jsiModule([]));
+		rn.__overrideNativeForTesting(null);
+		expect(rn.isNativeAvailable()).toBe(false);
+		expect(rn.tryNativeAtom()).toBeUndefined();
+		expect(rn.tryNativeAtomAsync()).toBeUndefined();
+		expect(() => rn.nativeAtom()).toThrow(/ATOM_ENGINE_NOT_FOUND|override/);
+		rn.__overrideNativeForTesting(engine);
+		expect(rn.nativeAtom()).toBe(engine);
+		expect(rn.tryNativeAtomAsync()).toBeUndefined();
+		rn.__overrideNativeForTesting(undefined);
+		expect(rn.tryNativeAtomAsync()).toBeDefined();
+	});
+
 	it("finds the module through nativeModuleProxy, as a bridgeless app has only that", async () => {
 		vi.resetModules();
 		Reflect.set(globalThis, "nativeModuleProxy", { NativeAtom: jsiModule([]) });
