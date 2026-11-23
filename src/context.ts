@@ -1,3 +1,4 @@
+import { E_ATOM_INVALID_CONTEXT } from "./errors.js";
 import type { RoundMode } from "./math.js";
 
 export interface AtomContext {
@@ -163,13 +164,13 @@ function normalizeContext(context: AtomContext): AtomContext {
 
 function assertContextMode(name: string, mode: unknown): void {
 	if (!isRoundMode(mode)) {
-		throw new Error(`Invalid Atom context ${name}: ${String(mode)}`);
+		throw new E_ATOM_INVALID_CONTEXT([name, String(mode)]);
 	}
 }
 
 function assertContextPrecision(precision: number): void {
 	if (!Number.isInteger(precision) || precision < 0 || precision > 10_000) {
-		throw new Error(`Invalid Atom context precision: ${precision}`);
+		throw new E_ATOM_INVALID_CONTEXT(["precision", precision]);
 	}
 }
 
@@ -179,6 +180,6 @@ function assertContextMaxDigits(maxDigits: number): void {
 		maxDigits < 1 ||
 		maxDigits > MAX_DIGITS_CEILING
 	) {
-		throw new Error(`Invalid Atom context maxDigits: ${maxDigits}`);
+		throw new E_ATOM_INVALID_CONTEXT(["maxDigits", maxDigits]);
 	}
 }

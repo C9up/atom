@@ -1,4 +1,15 @@
 import { defaultMaxDigits, isRoundMode } from "./context.js";
+import {
+	E_ATOM_DECIMAL_TOO_LARGE,
+	E_ATOM_DIVISION_BY_ZERO,
+	E_ATOM_INTERNAL,
+	E_ATOM_INVALID_DECIMAL,
+	E_ATOM_INVALID_EXPONENT,
+	E_ATOM_INVALID_ROUNDING_MODE,
+	E_ATOM_INVALID_SCALE,
+	E_ATOM_LENGTH_MISMATCH,
+	E_ATOM_NEGATIVE_SQRT,
+} from "./errors.js";
 
 export type RoundMode = "trunc" | "floor" | "ceil" | "half-up" | "half-even";
 
@@ -9,7 +20,7 @@ export type RoundMode = "trunc" | "floor" | "ceil" | "half-up" | "half-even";
  */
 export function assertRoundMode(value: unknown): RoundMode {
 	if (!isRoundMode(value)) {
-		throw new Error(`Unknown rounding mode: ${String(value)}`);
+		throw new E_ATOM_INVALID_ROUNDING_MODE([String(value)]);
 	}
 	return value;
 }
@@ -23,9 +34,9 @@ export interface ParsedDecimal {
 export const MAX_SCALE = 10_000;
 
 function tooLarge(what: string): Error {
-	return new Error(
-		`[ATOM_DECIMAL_TOO_LARGE] ${what} past the bound of ${defaultMaxDigits()} significant digits (configureAtomContext({ maxDigits }) sets it)`,
-	);
+	return new E_ATOM_DECIMAL_TOO_LARGE([
+		`${what} past the bound of ${defaultMaxDigits()} significant digits (configureAtomContext({ maxDigits }) sets it)`,
+	]);
 }
 
 /** Digits that cost something: leading zeros and a fraction's trailing ones do not. */
@@ -83,16 +94,16 @@ const MAX_EXPONENT = 10_000;
 function expandScientific(input: string): string {
 	const matched = /^([+-]?)(\d*)(?:\.(\d*))?[eE]([+-]?\d+)$/.exec(input);
 	if (!matched) {
-		throw new Error(`Invalid decimal: ${input}`);
+		throw new E_ATOM_INVALID_DECIMAL([`Invalid decimal: ${input}`]);
 	}
 	const [, sign, wholeRaw = "", fracRaw = "", exponentRaw = "0"] = matched;
 	if (wholeRaw.length === 0 && fracRaw.length === 0) {
-		throw new Error(`Invalid decimal: ${input}`);
+		throw new E_ATOM_INVALID_DECIMAL([`Invalid decimal: ${input}`]);
 	}
 
 	const exponent = Number(exponentRaw);
 	if (!Number.isInteger(exponent) || Math.abs(exponent) > MAX_EXPONENT) {
-		throw new Error(`Invalid decimal: ${input}`);
+		throw new E_ATOM_INVALID_DECIMAL([`Invalid decimal: ${input}`]);
 	}
 
 	const digits = `${wholeRaw}${fracRaw}`;
@@ -112,7 +123,7 @@ function expandScientific(input: string): string {
 export function parseDecimal(input: string): ParsedDecimal {
 	let s = input.trim();
 	if (!s) {
-		throw new Error("Invalid decimal: empty string");
+		throw new E_ATOM_INVALID_DECIMAL(["Invalid decimal: empty string"]);
 	}
 	if (/[eE]/.test(s)) {
 		s = expandScientific(s);
@@ -129,21 +140,21 @@ export function parseDecimal(input: string): ParsedDecimal {
 
 	const parts = body.split(".");
 	if (parts.length > 2) {
-		throw new Error(`Invalid decimal: ${input}`);
+		throw new E_ATOM_INVALID_DECIMAL([`Invalid decimal: ${input}`]);
 	}
 	const whole = parts[0] ?? "";
 	const frac = parts[1] ?? "";
 	if (!/^\d*$/.test(whole) || !/^\d*$/.test(frac)) {
-		throw new Error(`Invalid decimal: ${input}`);
+		throw new E_ATOM_INVALID_DECIMAL([`Invalid decimal: ${input}`]);
 	}
 	if (whole.length + frac.length === 0) {
-		throw new Error(`Invalid decimal: ${input}`);
+		throw new E_ATOM_INVALID_DECIMAL([`Invalid decimal: ${input}`]);
 	}
 	// Both bounds are checked on the text, before any BigInt is built: a scale
 	// past MAX_SCALE would otherwise be paid for by aligning the other operand
 	// to it, one multiplication by ten per digit.
 	if (frac.length > MAX_SCALE) {
-		throw new Error(`Invalid scale: ${frac.length}`);
+		throw new E_ATOM_INVALID_SCALE([frac.length]);
 	}
 	if (significantDigits(whole, frac) > defaultMaxDigits()) {
 		throw tooLarge("A decimal");
@@ -212,7 +223,7 @@ export function divTs(
 	const da = parseDecimal(a);
 	const db = parseDecimal(b);
 	if (db.int === 0n) {
-		throw new Error("Division by zero");
+		throw new E_ATOM_DIVISION_BY_ZERO();
 	}
 	let numerator = da.int * pow10BigInt(precision + db.scale);
 	let denominator = db.int * pow10BigInt(da.scale);
@@ -280,7 +291,7 @@ const ladder: Array<bigint | undefined> = [];
  */
 export function pow10BigInt(exp: number): bigint {
 	if (!Number.isSafeInteger(exp) || exp < 0) {
-		throw new Error(`Invalid exponent: ${exp}`);
+		throw new E_ATOM_INVALID_EXPONENT([exp]);
 	}
 	const rung = Math.floor(exp / LADDER_STEP);
 	if (rung > LADDER_RUNGS) return 10n ** BigInt(exp);
@@ -326,13 +337,13 @@ export function sumTs(values: readonly string[]): string {
 /** Pure-TS `dot` — `Σ aᵢ·bᵢ`, exact, refusing lists of different lengths. */
 export function dotTs(a: readonly string[], b: readonly string[]): string {
 	if (a.length !== b.length) {
-		throw new Error(`Mismatched batch lengths: ${a.length} and ${b.length}`);
+		throw new E_ATOM_LENGTH_MISMATCH([a.length, b.length]);
 	}
 	const groups = new Map<number, bigint>();
 	for (const [index, left] of a.entries()) {
 		const right = b[index];
 		if (right === undefined) {
-			throw new Error(`Mismatched batch lengths: ${a.length} and ${b.length}`);
+			throw new E_ATOM_LENGTH_MISMATCH([a.length, b.length]);
 		}
 		const da = parseDecimal(left);
 		const db = parseDecimal(right);
@@ -350,7 +361,7 @@ export function modTs(a: string, b: string): string {
 	const da = parseDecimal(a);
 	const db = parseDecimal(b);
 	if (db.int === 0n) {
-		throw new Error("Division by zero");
+		throw new E_ATOM_DIVISION_BY_ZERO();
 	}
 	const [ai, bi, scale] = alignScale(da, db);
 	return formatDecimal(ai % bi, scale);
@@ -377,7 +388,7 @@ export function assertPowerFits(base: ParsedDecimal, exp: number): void {
 	}
 	const steps = Math.abs(exp);
 	if (exp > 0 && scale * steps > MAX_SCALE) {
-		throw new Error(`Invalid scale: ${scale * steps}`);
+		throw new E_ATOM_INVALID_SCALE([scale * steps]);
 	}
 	const text = int.toString();
 	const lead = Math.min(text.length, 15);
@@ -402,7 +413,7 @@ export function powTs(
 	mode: RoundMode,
 ): string {
 	if (!Number.isInteger(exp)) {
-		throw new Error(`Invalid exponent: ${exp}`);
+		throw new E_ATOM_INVALID_EXPONENT([exp]);
 	}
 	if (exp === 0) return "1";
 	assertPowerFits(parseDecimal(a), exp);
@@ -439,7 +450,7 @@ export function powTs(
 export function sqrtTs(a: string, precision: number): string {
 	const parsed = parseDecimal(a);
 	if (parsed.int < 0n) {
-		throw new Error("Cannot compute sqrt of a negative decimal");
+		throw new E_ATOM_NEGATIVE_SQRT();
 	}
 	if (parsed.int === 0n) return "0";
 
@@ -473,7 +484,8 @@ export function sqrtRoundedTs(
  * upper bound within a factor of two it converges in `O(log bits)` steps.
  */
 function bigintSqrt(value: bigint): bigint {
-	if (value < 0n) throw new Error("Cannot compute sqrt of negative bigint");
+	if (value < 0n)
+		throw new E_ATOM_INTERNAL(["Cannot compute sqrt of negative bigint"]);
 	if (value < 2n) return value;
 	const bits = value.toString(2).length;
 	let x0 = 1n << BigInt(Math.ceil(bits / 2));
@@ -492,7 +504,7 @@ export function roundRationalToInt(
 	mode: RoundMode,
 ): bigint {
 	if (denominator <= 0n) {
-		throw new Error("Invalid rational denominator");
+		throw new E_ATOM_INTERNAL(["Invalid rational denominator"]);
 	}
 	const q = numerator / denominator;
 	const r = numerator % denominator;
@@ -518,7 +530,7 @@ export function roundRationalToInt(
 			return isEven ? q : q + sign;
 		}
 		default:
-			throw new Error(`Unknown rounding mode: ${String(mode)}`);
+			throw new E_ATOM_INVALID_ROUNDING_MODE([String(mode)]);
 	}
 }
 
@@ -534,7 +546,7 @@ export function roundSqrtInt(
 ): bigint {
 	const parsed = parseDecimal(value);
 	if (parsed.int < 0n) {
-		throw new Error("Cannot compute sqrt of a negative decimal");
+		throw new E_ATOM_NEGATIVE_SQRT();
 	}
 
 	const squareCmp = compareScaled(

@@ -3,6 +3,22 @@ import {
 	defaultQuantizeMode,
 	defaultRoundMode,
 } from "./context.js";
+import { fromEngine } from "./engineErrors.js";
+import {
+	E_ATOM_INTERNAL,
+	E_ATOM_INVALID_DECIMAL,
+	E_ATOM_INVALID_EXPONENT,
+	E_ATOM_INVALID_INPUT,
+	E_ATOM_INVALID_INTEGER,
+	E_ATOM_INVALID_RANGE,
+	E_ATOM_INVALID_RATIOS,
+	E_ATOM_INVALID_ROUNDING_MODE,
+	E_ATOM_INVALID_SCALE,
+	E_ATOM_INVALID_STEP,
+	E_ATOM_LENGTH_MISMATCH,
+	E_ATOM_PRECISION_LOSS,
+	E_ATOM_UNSAFE_INTEGER,
+} from "./errors.js";
 import {
 	addTs,
 	assertIntegerDigits,
@@ -128,13 +144,18 @@ export class Decimal {
 	static safeParse(value: unknown): DecimalSafeParseResult {
 		try {
 			if (!isDecimalInput(value)) {
-				throw new Error(`Invalid decimal input type: ${typeof value}`);
+				throw new E_ATOM_INVALID_INPUT([
+					`Invalid decimal input type: ${typeof value}`,
+				]);
 			}
 			return { success: true, value: new Decimal(value) };
 		} catch (error) {
 			return {
 				success: false,
-				error: error instanceof Error ? error : new Error(String(error)),
+				error:
+					error instanceof Error
+						? error
+						: new E_ATOM_INTERNAL([String(error)], { cause: error }),
 			};
 		}
 	}
@@ -165,7 +186,9 @@ export class Decimal {
 	static sum(values: Iterable<DecimalInput>): Decimal {
 		const parts = [...values].map(normalizeInput);
 		const native = tryNativeAtom();
-		return new Decimal(native ? native.sum(parts) : sumTs(parts));
+		return new Decimal(
+			native ? fromEngine(() => native.sum(parts)) : sumTs(parts),
+		);
 	}
 
 	/**
@@ -183,12 +206,12 @@ export class Decimal {
 		const left = [...a].map(normalizeInput);
 		const right = [...b].map(normalizeInput);
 		if (left.length !== right.length) {
-			throw new Error(
-				`Mismatched batch lengths: ${left.length} and ${right.length}`,
-			);
+			throw new E_ATOM_LENGTH_MISMATCH([left.length, right.length]);
 		}
 		const native = tryNativeAtom();
-		return new Decimal(native ? native.dot(left, right) : dotTs(left, right));
+		return new Decimal(
+			native ? fromEngine(() => native.dot(left, right)) : dotTs(left, right),
+		);
 	}
 
 	static zero(): Decimal {
@@ -225,21 +248,27 @@ export class Decimal {
 	plus(other: DecimalInput): Decimal {
 		const b = normalizeInput(other);
 		const native = tryNativeAtom();
-		const result = native ? native.add(this.#value, b) : addTs(this.#value, b);
+		const result = native
+			? fromEngine(() => native.add(this.#value, b))
+			: addTs(this.#value, b);
 		return new Decimal(result);
 	}
 
 	minus(other: DecimalInput): Decimal {
 		const b = normalizeInput(other);
 		const native = tryNativeAtom();
-		const result = native ? native.sub(this.#value, b) : subTs(this.#value, b);
+		const result = native
+			? fromEngine(() => native.sub(this.#value, b))
+			: subTs(this.#value, b);
 		return new Decimal(result);
 	}
 
 	times(other: DecimalInput): Decimal {
 		const b = normalizeInput(other);
 		const native = tryNativeAtom();
-		const result = native ? native.mul(this.#value, b) : mulTs(this.#value, b);
+		const result = native
+			? fromEngine(() => native.mul(this.#value, b))
+			: mulTs(this.#value, b);
 		return new Decimal(result);
 	}
 
@@ -250,7 +279,7 @@ export class Decimal {
 		const mode = assertRoundMode(options.mode ?? defaultRoundMode());
 		const native = tryNativeAtom();
 		const result = native
-			? native.div(this.#value, b, precision, mode)
+			? fromEngine(() => native.div(this.#value, b, precision, mode))
 			: divTs(this.#value, b, precision, mode);
 		return new Decimal(result);
 	}
@@ -258,7 +287,9 @@ export class Decimal {
 	mod(other: DecimalInput): Decimal {
 		const b = normalizeInput(other);
 		const native = tryNativeAtom();
-		const result = native ? native.rem(this.#value, b) : modTs(this.#value, b);
+		const result = native
+			? fromEngine(() => native.rem(this.#value, b))
+			: modTs(this.#value, b);
 		return new Decimal(result);
 	}
 
@@ -270,7 +301,7 @@ export class Decimal {
 		assertPowerFits(parseDecimal(this.#value), exp);
 		const native = tryNativeAtom();
 		const result = native
-			? native.pow(this.#value, exp, precision, mode)
+			? fromEngine(() => native.pow(this.#value, exp, precision, mode))
 			: powTs(this.#value, exp, precision, mode);
 		return new Decimal(result);
 	}
@@ -290,7 +321,9 @@ export class Decimal {
 	cmp(other: DecimalInput): -1 | 0 | 1 {
 		const b = normalizeInput(other);
 		const native = tryNativeAtom();
-		const result = native ? native.cmp(this.#value, b) : cmpTs(this.#value, b);
+		const result = native
+			? fromEngine(() => native.cmp(this.#value, b))
+			: cmpTs(this.#value, b);
 		if (result < 0) return -1;
 		if (result > 0) return 1;
 		return 0;
@@ -328,7 +361,7 @@ export class Decimal {
 		const minValue = new Decimal(min);
 		const maxValue = new Decimal(max);
 		if (minValue.gt(maxValue)) {
-			throw new Error("Invalid clamp range: min is greater than max");
+			throw new E_ATOM_INVALID_RANGE(["clamp"]);
 		}
 		if (this.lt(minValue)) return minValue;
 		if (this.gt(maxValue)) return maxValue;
@@ -344,7 +377,7 @@ export class Decimal {
 		const minValue = new Decimal(min);
 		const maxValue = new Decimal(max);
 		if (minValue.gt(maxValue)) {
-			throw new Error("Invalid between range: min is greater than max");
+			throw new E_ATOM_INVALID_RANGE(["between"]);
 		}
 		if (inclusive) {
 			return this.gte(minValue) && this.lte(maxValue);
@@ -412,7 +445,7 @@ export class Decimal {
 		const mode = assertRoundMode(options.mode ?? defaultQuantizeMode());
 		const stepValue = new Decimal(step);
 		if (!stepValue.gt(0)) {
-			throw new Error("Quantize step must be greater than zero");
+			throw new E_ATOM_INVALID_STEP();
 		}
 		const thisParts = parseDecimal(this.#value);
 		const stepParts = parseDecimal(stepValue.#value);
@@ -490,9 +523,7 @@ export class Decimal {
 		const factor = pow10BigInt(drop);
 		const remainder = parsed.int % factor;
 		if (exact && remainder !== 0n) {
-			throw new Error(
-				`Cannot convert ${this.#value} to minor units at scale ${scale} without precision loss`,
-			);
+			throw new E_ATOM_PRECISION_LOSS([this.#value, scale]);
 		}
 		return roundIntScale(parsed.int, parsed.scale, scale, mode);
 	}
@@ -537,20 +568,24 @@ export class Decimal {
 	 */
 	allocate(ratios: Array<string | number | bigint>): Decimal[] {
 		if (ratios.length === 0) {
-			throw new Error("Allocate requires at least one ratio");
+			throw new E_ATOM_INVALID_RATIOS(["Allocate requires at least one ratio"]);
 		}
 
 		const normalized = ratios.map((ratio) => {
 			const value = parseIntegerInput(ratio);
 			if (value < 0n) {
-				throw new Error(`Allocate ratios must be >= 0, got ${ratio}`);
+				throw new E_ATOM_INVALID_RATIOS([
+					`Allocate ratios must be >= 0, got ${ratio}`,
+				]);
 			}
 			return value;
 		});
 
 		const ratioTotal = normalized.reduce((acc, value) => acc + value, 0n);
 		if (ratioTotal <= 0n) {
-			throw new Error("Allocate requires at least one positive ratio");
+			throw new E_ATOM_INVALID_RATIOS([
+				"Allocate requires at least one positive ratio",
+			]);
 		}
 
 		const parsed = this.toParts();
@@ -644,7 +679,7 @@ export class Decimal {
 	#sqrtTruncInt(precision: number): bigint {
 		const native = tryNativeAtom();
 		const result = native
-			? native.sqrt(this.#value, precision)
+			? fromEngine(() => native.sqrt(this.#value, precision))
 			: sqrtTs(this.#value, precision);
 		const parsed = parseDecimal(result);
 		return roundIntScale(parsed.int, parsed.scale, precision, "trunc");
@@ -714,7 +749,7 @@ function normalizeInput(value: DecimalInput): string {
 	}
 	if (typeof value === "number") {
 		if (!Number.isFinite(value)) {
-			throw new Error(`Invalid decimal: ${value}`);
+			throw new E_ATOM_INVALID_DECIMAL([`Invalid decimal: ${value}`]);
 		}
 		return normalizeDecimalString(decimalStringFromNumber(value));
 	}
@@ -747,7 +782,7 @@ function inferInputScale(
 
 function decimalStringFromNumber(value: number): string {
 	if (Number.isInteger(value) && !Number.isSafeInteger(value)) {
-		throw new Error(`Unsafe integer decimal input: ${value}`);
+		throw new E_ATOM_UNSAFE_INTEGER([`Unsafe integer decimal input: ${value}`]);
 	}
 	const raw = String(value);
 	if (!/[eE]/.test(raw)) return raw;
@@ -755,7 +790,7 @@ function decimalStringFromNumber(value: number): string {
 	const [coefficient, exponentRaw] = raw.toLowerCase().split("e");
 	const exponent = Number(exponentRaw);
 	if (coefficient === undefined || !Number.isInteger(exponent)) {
-		throw new Error(`Invalid decimal: ${value}`);
+		throw new E_ATOM_INVALID_DECIMAL([`Invalid decimal: ${value}`]);
 	}
 	const negative = coefficient.startsWith("-");
 	const unsigned =
@@ -789,16 +824,16 @@ function parseIntegerInput(value: string | number | bigint): bigint {
 	}
 	if (typeof value === "number") {
 		if (!Number.isInteger(value)) {
-			throw new Error(`Invalid integer: ${value}`);
+			throw new E_ATOM_INVALID_INTEGER([value]);
 		}
 		if (!Number.isSafeInteger(value)) {
-			throw new Error(`Unsafe integer input: ${value}`);
+			throw new E_ATOM_UNSAFE_INTEGER([`Unsafe integer input: ${value}`]);
 		}
 		return BigInt(value);
 	}
 	const s = value.trim();
 	if (!/^[+-]?\d+$/.test(s)) {
-		throw new Error(`Invalid integer: ${value}`);
+		throw new E_ATOM_INVALID_INTEGER([value]);
 	}
 	// The pattern leaves no fraction, so this only adds the digit bound.
 	return parseDecimal(s).int;
@@ -810,7 +845,7 @@ function fromIntScale(int: bigint, scale: number): Decimal {
 
 function assertScale(scale: number): void {
 	if (!Number.isInteger(scale) || scale < 0 || scale > MAX_SCALE) {
-		throw new Error(`Invalid scale: ${scale}`);
+		throw new E_ATOM_INVALID_SCALE([scale]);
 	}
 }
 
@@ -820,7 +855,7 @@ function assertExponent(exp: number): void {
 		exp < -MAX_EXPONENT_ABS ||
 		exp > MAX_EXPONENT_ABS
 	) {
-		throw new Error(`Invalid exponent: ${exp}`);
+		throw new E_ATOM_INVALID_EXPONENT([exp]);
 	}
 }
 
@@ -865,7 +900,7 @@ function roundIntScale(
 			// usage. We throw instead of silently returning the truncated result
 			// because a silent fallback would hide a bug: an upstream cast past the
 			// type system (`as RoundMode`) would lose precision without any signal.
-			throw new Error(`Unknown rounding mode: ${String(mode)}`);
+			throw new E_ATOM_INVALID_ROUNDING_MODE([String(mode)]);
 	}
 }
 
@@ -1041,7 +1076,9 @@ function toAsciiDigits(
 function normalizeLocalized(input: string, shape: LocaleNumberShape): string {
 	const trimmed = input.trim();
 	if (!trimmed) {
-		throw new Error("Invalid localized decimal: empty string");
+		throw new E_ATOM_INVALID_DECIMAL([
+			"Invalid localized decimal: empty string",
+		]);
 	}
 
 	// Bidirectional marks are layout, not number: Intl writes one before the
@@ -1058,7 +1095,7 @@ function normalizeLocalized(input: string, shape: LocaleNumberShape): string {
 	if (/^\s$/u.test(shape.group)) {
 		normalized = normalized.replace(/\s/g, shape.group);
 	} else if (/\s/.test(normalized)) {
-		throw new Error(`Invalid localized decimal: ${input}`);
+		throw new E_ATOM_INVALID_DECIMAL([`Invalid localized decimal: ${input}`]);
 	}
 	if (shape.minus !== "-") {
 		normalized = normalized.replace(
@@ -1096,7 +1133,7 @@ function normalizeLocalized(input: string, shape: LocaleNumberShape): string {
 	);
 
 	if (!/^[+-]?\d+(\.\d+)?$/.test(normalized)) {
-		throw new Error(`Invalid localized decimal: ${input}`);
+		throw new E_ATOM_INVALID_DECIMAL([`Invalid localized decimal: ${input}`]);
 	}
 	return normalized;
 }
@@ -1109,7 +1146,7 @@ function validateLocalizedSyntax(
 ): void {
 	const decimalParts = value.split(decimal);
 	if (decimalParts.length > 2) {
-		throw new Error(`Invalid localized decimal: ${value}`);
+		throw new E_ATOM_INVALID_DECIMAL([`Invalid localized decimal: ${value}`]);
 	}
 	let integer = decimalParts[0] ?? "";
 	const fraction = decimalParts[1];
@@ -1117,32 +1154,34 @@ function validateLocalizedSyntax(
 		integer = integer.slice(1);
 	}
 	if (!integer) {
-		throw new Error(`Invalid localized decimal: ${value}`);
+		throw new E_ATOM_INVALID_DECIMAL([`Invalid localized decimal: ${value}`]);
 	}
 	if (fraction !== undefined && !/^\d+$/.test(fraction)) {
-		throw new Error(`Invalid localized decimal: ${value}`);
+		throw new E_ATOM_INVALID_DECIMAL([`Invalid localized decimal: ${value}`]);
 	}
 	if (!integer.includes(group)) {
 		if (!/^\d+$/.test(integer)) {
-			throw new Error(`Invalid localized decimal: ${value}`);
+			throw new E_ATOM_INVALID_DECIMAL([`Invalid localized decimal: ${value}`]);
 		}
 		return;
 	}
 	const groups = integer.split(group);
 	if (groups.some((part) => !/^\d+$/.test(part))) {
-		throw new Error(`Invalid localized decimal: ${value}`);
+		throw new E_ATOM_INVALID_DECIMAL([`Invalid localized decimal: ${value}`]);
 	}
 	for (let i = groups.length - 1, distance = 0; i >= 0; i--, distance++) {
 		const size = distance === 0 ? grouping.primary : grouping.secondary;
 		const group = groups[i];
 		if (group === undefined)
-			throw new Error(`Invalid localized decimal: ${value}`);
+			throw new E_ATOM_INVALID_DECIMAL([`Invalid localized decimal: ${value}`]);
 		if (i === 0) {
 			if (group.length < 1 || group.length > size) {
-				throw new Error(`Invalid localized decimal: ${value}`);
+				throw new E_ATOM_INVALID_DECIMAL([
+					`Invalid localized decimal: ${value}`,
+				]);
 			}
 		} else if (group.length !== size) {
-			throw new Error(`Invalid localized decimal: ${value}`);
+			throw new E_ATOM_INVALID_DECIMAL([`Invalid localized decimal: ${value}`]);
 		}
 	}
 }

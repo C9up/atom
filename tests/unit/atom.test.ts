@@ -327,7 +327,9 @@ describe("atom > JS fallback when native is unavailable", () => {
 	it("keeps nativeAtom fail-loud for direct internal callers", () => {
 		__overrideNativeForTesting(null);
 		try {
-			expect(() => nativeAtom()).toThrow(/ATOM_NAPI_DISABLED/);
+			expect(() => nativeAtom()).toThrow(
+				expect.objectContaining({ code: "E_ATOM_NAPI_DISABLED" }),
+			);
 		} finally {
 			__overrideNativeForTesting(undefined);
 		}

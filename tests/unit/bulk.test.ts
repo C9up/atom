@@ -223,27 +223,41 @@ describe("Atom.bulk", () => {
 	it("refuses to be read before it has been run", () => {
 		const plan = new Bulk();
 		const total = plan.column(QUANTITIES).sum();
-		expect(() => `${total}`).toThrow(/ATOM_BULK_NOT_RUN/);
-		expect(() => JSON.stringify(total)).toThrow(/ATOM_BULK_NOT_RUN/);
-		expect(() => Number(total)).toThrow(/ATOM_BULK_NOT_RUN/);
+		expect(() => `${total}`).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_NOT_RUN" }),
+		);
+		expect(() => JSON.stringify(total)).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_NOT_RUN" }),
+		);
+		expect(() => Number(total)).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_NOT_RUN" }),
+		);
 	});
 
 	it("refuses columns of different lengths", () => {
 		const plan = new Bulk();
 		plan.column(["1", "2", "3"]);
-		expect(() => plan.column(["1", "2"])).toThrow(/ATOM_BULK_LENGTH_MISMATCH/);
+		expect(() => plan.column(["1", "2"])).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_LENGTH_MISMATCH" }),
+		);
 	});
 
 	it("refuses an empty column and an empty run", () => {
 		const plan = new Bulk();
-		expect(() => plan.column([])).toThrow(/ATOM_BULK_EMPTY_COLUMN/);
-		expect(() => plan.run({})).toThrow(/ATOM_BULK_NO_OUTPUT/);
+		expect(() => plan.column([])).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_EMPTY_COLUMN" }),
+		);
+		expect(() => plan.run({})).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_NO_OUTPUT" }),
+		);
 	});
 
 	it("refuses a percentile outside the unit interval", () => {
 		const plan = new Bulk();
 		const column = plan.column(QUANTITIES);
-		expect(() => column.percentile(1.5)).toThrow(/ATOM_BULK_BAD_PERCENTILE/);
+		expect(() => column.percentile(1.5)).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_BAD_PERCENTILE" }),
+		);
 	});
 
 	it("takes a percentile by nearest rank", () => {
@@ -426,17 +440,25 @@ describe("Atom.bulk — every operation against Decimal", () => {
 	it("refuses the mistakes a plan can catch before it runs", () => {
 		const plan = new Bulk();
 		const column = plan.column(A);
-		expect(() => column.at(A.length)).toThrow(/ATOM_BULK_BAD_INDEX/);
-		expect(() => column.at(-1)).toThrow(/ATOM_BULK_BAD_INDEX/);
-		expect(() => plan.of("2").pow(1.5)).toThrow(/ATOM_BULK_BAD_EXPONENT/);
-		expect(() => plan.column(["1"])).toThrow(/ATOM_BULK_LENGTH_MISMATCH/);
+		expect(() => column.at(A.length)).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_BAD_INDEX" }),
+		);
+		expect(() => column.at(-1)).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_BAD_INDEX" }),
+		);
+		expect(() => plan.of("2").pow(1.5)).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_BAD_EXPONENT" }),
+		);
+		expect(() => plan.column(["1"])).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_LENGTH_MISMATCH" }),
+		);
 	});
 
 	it("refuses a sample deviation of a single value", () => {
 		const plan = new Bulk();
 		const single = plan.column(["42"]);
 		expect(() => single.stddev({ sample: true })).toThrow(
-			/ATOM_BULK_TOO_SHORT/,
+			expect.objectContaining({ code: "E_ATOM_BULK_TOO_SHORT" }),
 		);
 	});
 });
@@ -527,27 +549,35 @@ describe("Atom.bulk — columns already held as minor units", () => {
 	it("refuses anything that is not a whole number of minor units", () => {
 		const plan = new Bulk();
 		expect(() => plan.minorUnits([1.5], 2)).toThrow(
-			/ATOM_BULK_NOT_MINOR_UNITS/,
+			expect.objectContaining({ code: "E_ATOM_BULK_NOT_MINOR_UNITS" }),
 		);
 		expect(() => plan.minorUnits(["12.34"], 2)).toThrow(
-			/ATOM_BULK_NOT_MINOR_UNITS/,
+			expect.objectContaining({ code: "E_ATOM_BULK_NOT_MINOR_UNITS" }),
 		);
 		expect(() => plan.minorUnits([Number.MAX_SAFE_INTEGER + 2], 2)).toThrow(
-			/ATOM_BULK_NOT_MINOR_UNITS/,
+			expect.objectContaining({ code: "E_ATOM_BULK_NOT_MINOR_UNITS" }),
 		);
 	});
 
 	it("refuses a scale that is not one", () => {
 		const plan = new Bulk();
-		expect(() => plan.minorUnits([1n], -1)).toThrow(/ATOM_BULK_BAD_SCALE/);
-		expect(() => plan.minorUnits([1n], 1.5)).toThrow(/ATOM_BULK_BAD_SCALE/);
-		expect(() => plan.minorUnits([1n], 10_001)).toThrow(/ATOM_BULK_BAD_SCALE/);
+		expect(() => plan.minorUnits([1n], -1)).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_BAD_SCALE" }),
+		);
+		expect(() => plan.minorUnits([1n], 1.5)).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_BAD_SCALE" }),
+		);
+		expect(() => plan.minorUnits([1n], 10_001)).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_BAD_SCALE" }),
+		);
 	});
 
 	it("counts toward the plan's one column length", () => {
 		const plan = new Bulk();
 		plan.minorUnits([1n, 2n, 3n], 2);
-		expect(() => plan.column(["1", "2"])).toThrow(/ATOM_BULK_LENGTH_MISMATCH/);
+		expect(() => plan.column(["1", "2"])).toThrow(
+			expect.objectContaining({ code: "E_ATOM_BULK_LENGTH_MISMATCH" }),
+		);
 	});
 });
 
@@ -620,7 +650,9 @@ describe("Atom.bulk — the immediates a plan carries", () => {
 	it("refuses an exponent the scalar API refuses", () => {
 		const plan = new Bulk();
 		for (const exp of [2 ** 32 + 3, -(2 ** 32 + 3), 100_001, -100_001]) {
-			expect(() => plan.of("2").pow(exp)).toThrow(/ATOM_BULK_BAD_EXPONENT/);
+			expect(() => plan.of("2").pow(exp)).toThrow(
+				expect.objectContaining({ code: "E_ATOM_BULK_BAD_EXPONENT" }),
+			);
 			expect(() => new Decimal("2").pow(exp)).toThrow(/Invalid exponent/);
 		}
 	});
@@ -632,13 +664,23 @@ describe("Atom.bulk — the immediates a plan carries", () => {
 		for (const precision of BAD_PRECISIONS) {
 			const options = { precision };
 			expect(() => one.div(plan.of("3"), options)).toThrow(
-				/ATOM_BULK_BAD_PRECISION/,
+				expect.objectContaining({ code: "E_ATOM_BULK_BAD_PRECISION" }),
 			);
-			expect(() => one.sqrt(options)).toThrow(/ATOM_BULK_BAD_PRECISION/);
-			expect(() => one.pow(-2, options)).toThrow(/ATOM_BULK_BAD_PRECISION/);
-			expect(() => column.avg(options)).toThrow(/ATOM_BULK_BAD_PRECISION/);
-			expect(() => column.median(options)).toThrow(/ATOM_BULK_BAD_PRECISION/);
-			expect(() => column.stddev(options)).toThrow(/ATOM_BULK_BAD_PRECISION/);
+			expect(() => one.sqrt(options)).toThrow(
+				expect.objectContaining({ code: "E_ATOM_BULK_BAD_PRECISION" }),
+			);
+			expect(() => one.pow(-2, options)).toThrow(
+				expect.objectContaining({ code: "E_ATOM_BULK_BAD_PRECISION" }),
+			);
+			expect(() => column.avg(options)).toThrow(
+				expect.objectContaining({ code: "E_ATOM_BULK_BAD_PRECISION" }),
+			);
+			expect(() => column.median(options)).toThrow(
+				expect.objectContaining({ code: "E_ATOM_BULK_BAD_PRECISION" }),
+			);
+			expect(() => column.stddev(options)).toThrow(
+				expect.objectContaining({ code: "E_ATOM_BULK_BAD_PRECISION" }),
+			);
 			expect(() => new Decimal("1").div("3", options)).toThrow(/Invalid scale/);
 		}
 	});
@@ -647,7 +689,7 @@ describe("Atom.bulk — the immediates a plan carries", () => {
 		const plan = new Bulk();
 		const column = plan.column(["1", "2"]);
 		expect(() => column.stddev({ precision: 9_993 })).toThrow(
-			/ATOM_BULK_BAD_PRECISION/,
+			expect.objectContaining({ code: "E_ATOM_BULK_BAD_PRECISION" }),
 		);
 		expect(() => stddev(["1", "2"], { precision: 9_993 })).toThrow(
 			/Invalid scale/,

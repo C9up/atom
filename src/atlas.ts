@@ -22,6 +22,10 @@
  */
 
 import { Decimal, type RoundMode } from "./Decimal.js";
+import {
+	E_ATOM_INVALID_COLUMN_VALUE,
+	E_ATOM_NULL_COLUMN_VALUE,
+} from "./errors.js";
 
 export interface DecimalColumnOptions {
 	scale?: number;
@@ -87,17 +91,17 @@ export const decimalAtlasAdapter: DecimalAtlasAdapter = Object.freeze({
 		) {
 			return new Decimal(raw);
 		}
-		throw new TypeError(
+		throw new E_ATOM_INVALID_COLUMN_VALUE([
 			`decimalAtlasAdapter.consume: expected string | number | bigint | Decimal | null, got ${typeof raw}`,
-		);
+		]);
 	},
 	prepare(value: unknown): string | null {
 		if (value === null || value === undefined) return null;
 		if (!(value instanceof Decimal)) {
-			throw new TypeError(
+			throw new E_ATOM_INVALID_COLUMN_VALUE([
 				`decimalAtlasAdapter.prepare: expected a Decimal instance, got ${typeof value === "object" ? Object.prototype.toString.call(value) : typeof value}. ` +
 					"Wrap the value with `new Decimal(...)` before assigning to a column tagged with this adapter.",
-			);
+			]);
 		}
 		return value.toString();
 	},
@@ -115,9 +119,7 @@ export function decimalColumn(
 			const value = decimalAtlasAdapter.consume(raw);
 			if (value === null) {
 				if (!nullable) {
-					throw new TypeError(
-						"decimalColumn.consume: non-nullable column got null",
-					);
+					throw new E_ATOM_NULL_COLUMN_VALUE(["consume"]);
 				}
 				return null;
 			}
@@ -127,9 +129,7 @@ export function decimalColumn(
 			const prepared = decimalAtlasAdapter.prepare(value);
 			if (prepared === null) {
 				if (!nullable) {
-					throw new TypeError(
-						"decimalColumn.prepare: non-nullable column got null",
-					);
+					throw new E_ATOM_NULL_COLUMN_VALUE(["prepare"]);
 				}
 				return null;
 			}

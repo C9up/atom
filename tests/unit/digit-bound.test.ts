@@ -10,7 +10,7 @@ import {
 } from "../../src/index.js";
 import { __overrideNativeForTesting } from "../../src/native.js";
 
-const TOO_LARGE = /ATOM_DECIMAL_TOO_LARGE/;
+const TOO_LARGE = expect.objectContaining({ code: "E_ATOM_DECIMAL_TOO_LARGE" });
 
 /** Runs `check` on the native engine, then on the TypeScript one. */
 function onBothEngines(check: () => void): void {
@@ -90,13 +90,14 @@ describe("Decimal — the significant-digit bound", () => {
 
 	it("refuses a megabyte of digits quickly, without echoing it", () => {
 		const megabyte = "7".repeat(1_000_000);
-		let message = "";
+		let caught: unknown;
 		try {
 			new Decimal(megabyte);
 		} catch (error) {
-			message = error instanceof Error ? error.message : String(error);
+			caught = error;
 		}
-		expect(message).toMatch(TOO_LARGE);
+		expect(caught).toEqual(TOO_LARGE);
+		const message = caught instanceof Error ? caught.message : String(caught);
 		expect(message.length).toBeLessThan(300);
 		const refuse = (digits: string) => {
 			expect(() => new Decimal(digits)).toThrow(TOO_LARGE);

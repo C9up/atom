@@ -1,5 +1,6 @@
 import { defaultQuantizeMode } from "./context.js";
 import { Decimal, type DecimalInput, type RoundMode } from "./Decimal.js";
+import { E_ATOM_CURRENCY_MISMATCH, E_ATOM_INVALID_CURRENCY } from "./errors.js";
 import { assertRoundMode } from "./math.js";
 
 export interface MoneyOptions {
@@ -202,9 +203,12 @@ export class Money {
 
 	#assertSameCurrency(other: Money): void {
 		if (this.#currency !== other.#currency || this.#scale !== other.#scale) {
-			throw new Error(
-				`Currency mismatch: ${this.#currency}/${this.#scale} !== ${other.#currency}/${other.#scale}`,
-			);
+			throw new E_ATOM_CURRENCY_MISMATCH([
+				this.#currency,
+				this.#scale,
+				other.#currency,
+				other.#scale,
+			]);
 		}
 	}
 }
@@ -220,7 +224,7 @@ export function money(
 function normalizeCurrency(currency: string): string {
 	const normalized = currency.trim().toUpperCase();
 	if (!/^[A-Z]{3}$/.test(normalized)) {
-		throw new Error(`Invalid currency code: ${currency}`);
+		throw new E_ATOM_INVALID_CURRENCY([currency]);
 	}
 	return normalized;
 }

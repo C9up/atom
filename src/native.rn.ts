@@ -9,6 +9,7 @@
  * link it, Expo Go), the Decimal facade falls back to the TypeScript engine,
  * as everywhere else. It exports what native.ts exports.
  */
+import { E_ATOM_ENGINE_NOT_FOUND, E_ATOM_NAPI_DISABLED } from "./errors.js";
 import type { NativeAtom, NativeAtomAsync } from "./native.js";
 
 export type { NativeAtom, NativeAtomAsync } from "./native.js";
@@ -115,19 +116,17 @@ export function isNativeAvailable(): boolean {
 export function nativeAtom(): NativeAtom {
 	if (overrideNative !== undefined) {
 		if (overrideNative === null) {
-			throw new Error(
-				"[ATOM_NAPI_DISABLED] Native engine is disabled (test override)",
-			);
+			throw new E_ATOM_NAPI_DISABLED();
 		}
 		return overrideNative;
 	}
 	if (!native) {
-		throw new Error(
-			"[ATOM_ENGINE_NOT_FOUND] Decimal engine not available.\n" +
+		throw new E_ATOM_ENGINE_NOT_FOUND([
+			"Decimal engine not available.\n" +
 				"  Environment: React Native\n" +
 				"  Reason: the NativeAtom JSI module is not linked into the app\n" +
 				"  Fix: build the app with `ream android:*`, which links it from atom's reamNative",
-		);
+		]);
 	}
 	return native;
 }

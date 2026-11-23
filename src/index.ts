@@ -28,6 +28,7 @@ export type {
 	ToMinorUnitsOptions,
 } from "./Decimal.js";
 export { Decimal } from "./Decimal.js";
+export * as errors from "./errors.js";
 export type {
 	MoneyFormatOptions,
 	MoneyOptions,
@@ -40,6 +41,12 @@ import { bulk as bulkFn } from "./bulk.js";
 import { defaultPrecision, defaultRoundMode } from "./context.js";
 import type { MedianOptions, StddevOptions } from "./Decimal.js";
 import { Decimal, type DecimalInput } from "./Decimal.js";
+import {
+	E_ATOM_EMPTY_INPUT,
+	E_ATOM_INTERNAL,
+	E_ATOM_INVALID_INPUT,
+	E_ATOM_TOO_FEW_VALUES,
+} from "./errors.js";
 import { money } from "./Money.js";
 
 export function decimal(value: DecimalInput): Decimal {
@@ -72,11 +79,11 @@ function isDecimalValue(value: unknown): value is DecimalInput {
 
 function toDecimalValue(value: unknown): DecimalInput {
 	if (isDecimalValue(value)) return value;
-	throw new Error(
+	throw new E_ATOM_INVALID_INPUT([
 		`Atom aggregates take a string, number, bigint or Decimal, got ${
 			value === null ? "null" : typeof value
 		}`,
-	);
+	]);
 }
 
 function resolveValues(args: readonly unknown[]): Iterable<DecimalInput> {
@@ -108,7 +115,7 @@ function avgImpl(values: Iterable<DecimalInput>): Decimal {
 	const total = Decimal.sum(list);
 	const count = list.length;
 	if (count === 0) {
-		throw new Error("Atom.avg requires at least one value");
+		throw new E_ATOM_EMPTY_INPUT(["avg"]);
 	}
 	return total.div(String(count));
 }
@@ -116,7 +123,7 @@ function avgImpl(values: Iterable<DecimalInput>): Decimal {
 function minImpl(values: Iterable<DecimalInput>): Decimal {
 	const [first, ...rest] = [...values].map((value) => new Decimal(value));
 	if (first === undefined) {
-		throw new Error("Atom.min requires at least one value");
+		throw new E_ATOM_EMPTY_INPUT(["min"]);
 	}
 	let best = first;
 	for (const candidate of rest) {
@@ -128,7 +135,7 @@ function minImpl(values: Iterable<DecimalInput>): Decimal {
 function maxImpl(values: Iterable<DecimalInput>): Decimal {
 	const [first, ...rest] = [...values].map((value) => new Decimal(value));
 	if (first === undefined) {
-		throw new Error("Atom.max requires at least one value");
+		throw new E_ATOM_EMPTY_INPUT(["max"]);
 	}
 	let best = first;
 	for (const candidate of rest) {
@@ -143,16 +150,18 @@ function medianImpl(
 ): Decimal {
 	const list = [...values].map((value) => new Decimal(value));
 	if (list.length === 0) {
-		throw new Error("Atom.median requires at least one value");
+		throw new E_ATOM_EMPTY_INPUT(["median"]);
 	}
 	list.sort((a, b) => a.cmp(b));
 	const mid = Math.floor(list.length / 2);
 	// The empty case threw above, so both halves of the middle are present.
 	const upper = list[mid];
-	if (upper === undefined) throw new Error("Atom.median lost its middle value");
+	if (upper === undefined)
+		throw new E_ATOM_INTERNAL(["Atom.median lost its middle value"]);
 	if (list.length % 2 === 1) return upper;
 	const lower = list[mid - 1];
-	if (lower === undefined) throw new Error("Atom.median lost its middle value");
+	if (lower === undefined)
+		throw new E_ATOM_INTERNAL(["Atom.median lost its middle value"]);
 	const precision = options.precision ?? defaultPrecision();
 	return lower.plus(upper).div("2", { precision, mode: options.mode });
 }
@@ -183,14 +192,14 @@ function stddevImpl(
 ): Decimal {
 	const list = [...values].map((value) => new Decimal(value));
 	if (list.length === 0) {
-		throw new Error("Atom.stddev requires at least one value");
+		throw new E_ATOM_EMPTY_INPUT(["stddev"]);
 	}
 	const sample = options.sample ?? false;
 	const precision = options.precision ?? defaultPrecision();
 	const mode = options.mode ?? defaultRoundMode();
 	const divisor = sample ? list.length - 1 : list.length;
 	if (divisor <= 0) {
-		throw new Error("Atom.stddev sample mode requires at least two values");
+		throw new E_ATOM_TOO_FEW_VALUES();
 	}
 	// The one definition `BulkColumn.stddev` shares: the mean and the variance
 	// carry eight guard digits past the precision asked for, the squared

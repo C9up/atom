@@ -31,6 +31,24 @@ import {
 	MAX_EXPONENT_ABS,
 	MAX_SCALE,
 } from "./Decimal.js";
+import { engineError } from "./engineErrors.js";
+import {
+	E_ATOM_BULK_BAD_EXPONENT,
+	E_ATOM_BULK_BAD_INDEX,
+	E_ATOM_BULK_BAD_OUTPUT,
+	E_ATOM_BULK_BAD_PERCENTILE,
+	E_ATOM_BULK_BAD_PRECISION,
+	E_ATOM_BULK_BAD_PROGRAM,
+	E_ATOM_BULK_BAD_SCALE,
+	E_ATOM_BULK_EMPTY_COLUMN,
+	E_ATOM_BULK_LENGTH_MISMATCH,
+	E_ATOM_BULK_LOST_OUTPUT,
+	E_ATOM_BULK_NO_LENGTH,
+	E_ATOM_BULK_NO_OUTPUT,
+	E_ATOM_BULK_NOT_MINOR_UNITS,
+	E_ATOM_BULK_NOT_RUN,
+	E_ATOM_BULK_TOO_SHORT,
+} from "./errors.js";
 import type { ParsedDecimal, RoundMode } from "./math.js";
 import {
 	addTs,
@@ -134,7 +152,7 @@ const nodes = new WeakMap<BulkValue, PlanNode>();
 function nodeOf(value: BulkValue): PlanNode {
 	const node = nodes.get(value);
 	if (node === undefined) {
-		throw new Error("[ATOM_BULK_BAD_OUTPUT] not a planned value");
+		throw new E_ATOM_BULK_BAD_OUTPUT(["not a planned value"]);
 	}
 	return node;
 }
@@ -158,16 +176,12 @@ abstract class BulkValue {
 	 * value has no string form until it has been run.
 	 */
 	toString(): never {
-		throw new Error(
-			"[ATOM_BULK_NOT_RUN] This value has been planned, not computed. Pass it to run() to get a Decimal.",
-		);
+		throw new E_ATOM_BULK_NOT_RUN();
 	}
 
 	/** Refused for the same reason as {@link toString}. */
 	valueOf(): never {
-		throw new Error(
-			"[ATOM_BULK_NOT_RUN] This value has been planned, not computed. Pass it to run() to get a Decimal.",
-		);
+		throw new E_ATOM_BULK_NOT_RUN();
 	}
 
 	toJSON(): never {
@@ -220,9 +234,7 @@ function column(
 function precisionOf(options: BulkDivOptions): number {
 	const precision = options.precision ?? defaultPrecision();
 	if (!Number.isInteger(precision) || precision < 0 || precision > MAX_SCALE) {
-		throw new Error(
-			`[ATOM_BULK_BAD_PRECISION] Expected a whole precision between 0 and ${MAX_SCALE}, got ${precision}`,
-		);
+		throw new E_ATOM_BULK_BAD_PRECISION([MAX_SCALE, precision]);
 	}
 	return precision;
 }
@@ -249,7 +261,7 @@ function modeOf(options: BulkDivOptions): number {
 function modeAt(code: number): RoundMode {
 	const mode = ROUND_MODES[code];
 	if (mode === undefined) {
-		throw new Error(`[ATOM_BULK_BAD_PROGRAM] Unknown rounding mode ${code}`);
+		throw new E_ATOM_BULK_BAD_PROGRAM([`Unknown rounding mode ${code}`]);
 	}
 	return mode;
 }
@@ -325,9 +337,7 @@ export class BulkScalar extends BulkValue {
 			exp < -MAX_EXPONENT_ABS ||
 			exp > MAX_EXPONENT_ABS
 		) {
-			throw new Error(
-				`[ATOM_BULK_BAD_EXPONENT] Expected a whole exponent of at most ${MAX_EXPONENT_ABS} either way, got ${exp}`,
-			);
+			throw new E_ATOM_BULK_BAD_EXPONENT([MAX_EXPONENT_ABS, exp]);
 		}
 		if (exp >= 0) {
 			return scalar(Op.PowScalar, [nodeOf(this)], exp);
@@ -415,9 +425,9 @@ export class BulkColumn extends BulkValue {
 		// refuse the same mistake with two different messages.
 		const length = this.#length();
 		if (!Number.isSafeInteger(index) || index < 0 || index >= length) {
-			throw new Error(
-				`[ATOM_BULK_BAD_INDEX] Index ${index} is outside a column of ${length}`,
-			);
+			throw new E_ATOM_BULK_BAD_INDEX([
+				`Index ${index} is outside a column of ${length}`,
+			]);
 		}
 		return scalar(Op.AtColumn, [nodeOf(this)], index);
 	}
@@ -446,9 +456,7 @@ export class BulkColumn extends BulkValue {
 	 */
 	percentile(fraction: number): BulkScalar {
 		if (!(fraction >= 0 && fraction <= 1)) {
-			throw new Error(
-				`[ATOM_BULK_BAD_PERCENTILE] Expected a fraction between 0 and 1, got ${fraction}`,
-			);
+			throw new E_ATOM_BULK_BAD_PERCENTILE([fraction]);
 		}
 		const length = this.#length();
 		const rank = Math.min(length - 1, Math.ceil(fraction * length) - 1);
@@ -459,9 +467,7 @@ export class BulkColumn extends BulkValue {
 		const length = this.#length();
 		const divisor = options.sample === true ? length - 1 : length;
 		if (divisor <= 0) {
-			throw new Error(
-				"[ATOM_BULK_TOO_SHORT] A sample standard deviation needs at least two values",
-			);
+			throw new E_ATOM_BULK_TOO_SHORT();
 		}
 		// Checked as given, then again with the eight working digits the
 		// variance carries: both have to fit, as they do for `Atom.stddev`.
@@ -489,7 +495,7 @@ export class BulkColumn extends BulkValue {
 			for (const input of node.inputs) {
 				if (input.shape === "column") return seen(input);
 			}
-			throw new Error("[ATOM_BULK_NO_LENGTH] A column with no source");
+			throw new E_ATOM_BULK_NO_LENGTH();
 		};
 		return seen(nodeOf(this));
 	}
@@ -523,17 +529,17 @@ function toInteger(value: string | number | bigint): bigint {
 	}
 	if (typeof value === "number") {
 		if (!Number.isSafeInteger(value)) {
-			throw new Error(
-				`[ATOM_BULK_NOT_MINOR_UNITS] Minor units must be whole and exact, got ${value}`,
-			);
+			throw new E_ATOM_BULK_NOT_MINOR_UNITS([
+				`Minor units must be whole and exact, got ${value}`,
+			]);
 		}
 		return BigInt(value);
 	}
 	const parsed = parseDecimal(value);
 	if (parsed.scale !== 0) {
-		throw new Error(
-			`[ATOM_BULK_NOT_MINOR_UNITS] Minor units must be whole, got ${value}`,
-		);
+		throw new E_ATOM_BULK_NOT_MINOR_UNITS([
+			`Minor units must be whole, got ${value}`,
+		]);
 	}
 	return parsed.int;
 }
@@ -588,7 +594,7 @@ export class Bulk {
 		scale: number,
 	): BulkColumn {
 		if (!Number.isInteger(scale) || scale < 0 || scale > MAX_SCALE) {
-			throw new Error(`[ATOM_BULK_BAD_SCALE] Invalid scale: ${scale}`);
+			throw new E_ATOM_BULK_BAD_SCALE([scale]);
 		}
 		return this.#load(
 			[...values].map((value) => ({ int: toInteger(value), scale })),
@@ -599,12 +605,10 @@ export class Bulk {
 		if (this.#rows === undefined) {
 			this.#rows = parsed.length;
 		} else if (this.#rows !== parsed.length) {
-			throw new Error(
-				`[ATOM_BULK_LENGTH_MISMATCH] This plan holds columns of ${this.#rows} values; got ${parsed.length}`,
-			);
+			throw new E_ATOM_BULK_LENGTH_MISMATCH([this.#rows, parsed.length]);
 		}
 		if (parsed.length === 0) {
-			throw new Error("[ATOM_BULK_EMPTY_COLUMN] A column needs a value");
+			throw new E_ATOM_BULK_EMPTY_COLUMN();
 		}
 		this.#columns.push(parsed);
 		return new BulkColumn({
@@ -659,7 +663,7 @@ export class Bulk {
 						await engine.runBulk(compiled.values, rows, compiled.program),
 					);
 				} catch (error) {
-					if (!isOverflow(error)) throw error;
+					if (!isOverflow(error)) throw engineError(error);
 					return collect(
 						outputs,
 						roots.map((root) => evaluateScalar(root, new Map())),
@@ -682,7 +686,7 @@ export class Bulk {
 				try {
 					return native.runBulk(compiled.values, rows, compiled.program);
 				} catch (error) {
-					if (!isOverflow(error)) throw error;
+					if (!isOverflow(error)) throw engineError(error);
 				}
 			}
 		}
@@ -694,12 +698,12 @@ export class Bulk {
 function rootsOf(outputs: Readonly<Record<string, unknown>>): PlanNode[] {
 	const keys = Object.keys(outputs);
 	if (keys.length === 0) {
-		throw new Error("[ATOM_BULK_NO_OUTPUT] run() needs a value to compute");
+		throw new E_ATOM_BULK_NO_OUTPUT();
 	}
 	return keys.map((key) => {
 		const value = outputs[key];
 		if (!(value instanceof BulkScalar)) {
-			throw new Error(`[ATOM_BULK_BAD_OUTPUT] "${key}" is not a planned value`);
+			throw new E_ATOM_BULK_BAD_OUTPUT([`"${key}" is not a planned value`]);
 		}
 		return nodeOf(value);
 	});
@@ -714,12 +718,12 @@ function collect<T extends Readonly<Record<string, BulkScalar>>>(
 	Object.keys(outputs).forEach((key, index) => {
 		const value = results[index];
 		if (value === undefined) {
-			throw new Error("[ATOM_BULK_LOST_OUTPUT] The run lost a value");
+			throw new E_ATOM_BULK_LOST_OUTPUT();
 		}
 		out[key] = new Decimal(value);
 	});
 	if (!holdsEveryOutput(out, outputs)) {
-		throw new Error("[ATOM_BULK_LOST_OUTPUT] The run lost a value");
+		throw new E_ATOM_BULK_LOST_OUTPUT();
 	}
 	return out;
 }
@@ -1027,14 +1031,14 @@ function computeScalar(node: PlanNode, memo: Map<PlanNode, unknown>): string {
 	const scalarAt = (index: number): string => {
 		const input = node.inputs[index];
 		if (input === undefined) {
-			throw new Error("[ATOM_BULK_BAD_PROGRAM] A missing operand");
+			throw new E_ATOM_BULK_BAD_PROGRAM(["A missing operand"]);
 		}
 		return evaluateScalar(input, memo);
 	};
 	const columnAt = (index: number): string[] => {
 		const input = node.inputs[index];
 		if (input === undefined) {
-			throw new Error("[ATOM_BULK_BAD_PROGRAM] A missing operand");
+			throw new E_ATOM_BULK_BAD_PROGRAM(["A missing operand"]);
 		}
 		return evaluateColumn(input, memo);
 	};
@@ -1043,7 +1047,7 @@ function computeScalar(node: PlanNode, memo: Map<PlanNode, unknown>): string {
 		case Op.LoadScalar: {
 			const value = node.parsed?.[0];
 			if (value === undefined) {
-				throw new Error("[ATOM_BULK_BAD_PROGRAM] A load with no value");
+				throw new E_ATOM_BULK_BAD_PROGRAM(["A load with no value"]);
 			}
 			return formatDecimal(value.int, value.scale);
 		}
@@ -1103,16 +1107,16 @@ function computeScalar(node: PlanNode, memo: Map<PlanNode, unknown>): string {
 		case Op.AtColumn: {
 			const value = columnAt(0)[node.imm0];
 			if (value === undefined) {
-				throw new Error(
-					`[ATOM_BULK_BAD_INDEX] Index ${node.imm0} is outside the column`,
-				);
+				throw new E_ATOM_BULK_BAD_INDEX([
+					`Index ${node.imm0} is outside the column`,
+				]);
 			}
 			return value;
 		}
 		default:
-			throw new Error(
-				`[ATOM_BULK_BAD_PROGRAM] Opcode ${node.code} does not produce a value`,
-			);
+			throw new E_ATOM_BULK_BAD_PROGRAM([
+				`Opcode ${node.code} does not produce a value`,
+			]);
 	}
 }
 
@@ -1120,14 +1124,14 @@ function computeColumn(node: PlanNode, memo: Map<PlanNode, unknown>): string[] {
 	const columnAt = (index: number): string[] => {
 		const input = node.inputs[index];
 		if (input === undefined) {
-			throw new Error("[ATOM_BULK_BAD_PROGRAM] A missing operand");
+			throw new E_ATOM_BULK_BAD_PROGRAM(["A missing operand"]);
 		}
 		return evaluateColumn(input, memo);
 	};
 	const scalarAt = (index: number): string => {
 		const input = node.inputs[index];
 		if (input === undefined) {
-			throw new Error("[ATOM_BULK_BAD_PROGRAM] A missing operand");
+			throw new E_ATOM_BULK_BAD_PROGRAM(["A missing operand"]);
 		}
 		return evaluateScalar(input, memo);
 	};
@@ -1179,9 +1183,9 @@ function computeColumn(node: PlanNode, memo: Map<PlanNode, unknown>): string[] {
 		case Op.SortColumn:
 			return [...columnAt(0)].sort((a, b) => cmpTs(a, b));
 		default:
-			throw new Error(
-				`[ATOM_BULK_BAD_PROGRAM] Opcode ${node.code} does not produce a column`,
-			);
+			throw new E_ATOM_BULK_BAD_PROGRAM([
+				`Opcode ${node.code} does not produce a column`,
+			]);
 	}
 }
 

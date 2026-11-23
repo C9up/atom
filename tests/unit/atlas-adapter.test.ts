@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { decimalAtlasAdapter, decimalColumn } from "../../src/atlas.js";
 import { Decimal } from "../../src/Decimal.js";
+import * as errors from "../../src/errors.js";
 
 describe("decimalAtlasAdapter", () => {
 	describe("consume (DB → model)", () => {
@@ -47,10 +48,16 @@ describe("decimalAtlasAdapter", () => {
 			expect(d?.toString()).toBe("42");
 		});
 
-		it("throws TypeError on unsupported inputs (boolean, object, array)", () => {
-			expect(() => decimalAtlasAdapter.consume(true)).toThrow(TypeError);
-			expect(() => decimalAtlasAdapter.consume({})).toThrow(TypeError);
-			expect(() => decimalAtlasAdapter.consume([])).toThrow(TypeError);
+		it("throws E_ATOM_INVALID_COLUMN_VALUE on unsupported inputs (boolean, object, array)", () => {
+			expect(() => decimalAtlasAdapter.consume(true)).toThrow(
+				errors.E_ATOM_INVALID_COLUMN_VALUE,
+			);
+			expect(() => decimalAtlasAdapter.consume({})).toThrow(
+				errors.E_ATOM_INVALID_COLUMN_VALUE,
+			);
+			expect(() => decimalAtlasAdapter.consume([])).toThrow(
+				errors.E_ATOM_INVALID_COLUMN_VALUE,
+			);
 		});
 
 		it("preserves an 18-digit value (precision pressure point)", () => {
@@ -78,12 +85,16 @@ describe("decimalAtlasAdapter", () => {
 			expect(decimalAtlasAdapter.prepare(undefined)).toBeNull();
 		});
 
-		it("throws TypeError when called with a JS number", () => {
-			expect(() => decimalAtlasAdapter.prepare(1.1)).toThrow(TypeError);
+		it("throws E_ATOM_INVALID_COLUMN_VALUE when called with a JS number", () => {
+			expect(() => decimalAtlasAdapter.prepare(1.1)).toThrow(
+				errors.E_ATOM_INVALID_COLUMN_VALUE,
+			);
 		});
 
-		it("throws TypeError when called with a string", () => {
-			expect(() => decimalAtlasAdapter.prepare("1.1")).toThrow(TypeError);
+		it("throws E_ATOM_INVALID_COLUMN_VALUE when called with a string", () => {
+			expect(() => decimalAtlasAdapter.prepare("1.1")).toThrow(
+				errors.E_ATOM_INVALID_COLUMN_VALUE,
+			);
 		});
 	});
 

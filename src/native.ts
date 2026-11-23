@@ -9,6 +9,8 @@
  * pure TypeScript BigInt implementation when unavailable.
  */
 
+import { E_ATOM_ENGINE_NOT_FOUND, E_ATOM_NAPI_DISABLED } from "./errors.js";
+
 /**
  * The engine's surface, as the Rust declares it.
  *
@@ -77,20 +79,18 @@ export function isNativeAvailable(): boolean {
 export function nativeAtom(): NativeAtom {
 	if (overrideNative !== undefined) {
 		if (overrideNative === null) {
-			throw new Error(
-				"[ATOM_NAPI_DISABLED] Native engine is disabled (test override)",
-			);
+			throw new E_ATOM_NAPI_DISABLED();
 		}
 		return overrideNative;
 	}
 	if (!native) {
-		throw new Error(
-			`[ATOM_ENGINE_NOT_FOUND] Decimal engine not available.\n` +
+		throw new E_ATOM_ENGINE_NOT_FOUND([
+			`Decimal engine not available.\n` +
 				`  Environment: ${isNode ? "Node" : "Browser"}\n` +
 				`  Reason: ${loadError ?? "binary not found"}\n` +
 				`  Fix (Node): cd packages/atom && pnpm build:napi\n` +
 				`  Fix (Browser): cd packages/atom && pnpm build:wasm`,
-		);
+		]);
 	}
 	return native;
 }

@@ -109,7 +109,9 @@ describe("atom on a phone", () => {
 		const rn = await loadRn(() => null);
 		expect(rn.isNativeAvailable()).toBe(false);
 		expect(rn.tryNativeAtom()).toBeUndefined();
-		expect(() => rn.nativeAtom()).toThrow(/ATOM_ENGINE_NOT_FOUND/);
+		expect(() => rn.nativeAtom()).toThrow(
+			expect.objectContaining({ code: "E_ATOM_ENGINE_NOT_FOUND" }),
+		);
 		const noProxy = await loadRn(undefined);
 		expect(noProxy.tryNativeAtom()).toBeUndefined();
 	});
