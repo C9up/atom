@@ -1,6 +1,13 @@
 import { E_ATOM_INVALID_CONTEXT } from "./errors.js";
 import type { RoundMode } from "./math.js";
 
+/**
+ * The most fractional digits a value, a precision or a scale may ever ask
+ * for, and the ceiling of `maxScale` and `maxExponent`. Kept in step with
+ * `MAX_SCALE` in the Rust engine.
+ */
+export const MAX_SCALE = 10_000;
+
 export interface AtomContext {
 	precision: number;
 	roundMode: RoundMode;
@@ -13,6 +20,21 @@ export interface AtomContext {
 	 * an integer part as long again.
 	 */
 	maxDigits: number;
+	/**
+	 * How far the exponent of a scientific literal (`1e-18`, `2.5E+6`) may
+	 * move the decimal point, either way. The literal is written out in full
+	 * before anything else reads it, so six bytes like `1e-9990` would
+	 * otherwise become ten thousand digits that every later operation pays
+	 * for. The default covers money and any real measurement; an application
+	 * that reads wider literals raises it.
+	 */
+	maxExponent: number;
+	/**
+	 * The most fractional digits a value, a precision or a scale may carry.
+	 * Aligning two operands costs one digit per unit of scale between them, so
+	 * an application that only handles amounts can lower it.
+	 */
+	maxScale: number;
 }
 
 export type AtomContextOptions = Partial<AtomContext>;
@@ -25,6 +47,8 @@ const DEFAULT_CONTEXT: AtomContext = Object.freeze({
 	roundMode: "half-up",
 	quantizeMode: "half-up",
 	maxDigits: 20_000,
+	maxExponent: 100,
+	maxScale: MAX_SCALE,
 });
 
 /** The highest bound an application may configure. */
@@ -150,6 +174,14 @@ export function defaultMaxDigits(): number {
 	return currentContext().maxDigits;
 }
 
+export function defaultMaxExponent(): number {
+	return currentContext().maxExponent;
+}
+
+export function defaultMaxScale(): number {
+	return currentContext().maxScale;
+}
+
 /**
  * Validate the whole context when it is set. A mode was stored unchecked and
  * only failed later, inside an unrelated `sqrt` or `Money` constructor.
@@ -157,6 +189,13 @@ export function defaultMaxDigits(): number {
 function normalizeContext(context: AtomContext): AtomContext {
 	assertContextPrecision(context.precision);
 	assertContextMaxDigits(context.maxDigits);
+	assertContextBound("maxExponent", context.maxExponent, MAX_SCALE);
+	assertContextBound("maxScale", context.maxScale, MAX_SCALE);
+	// A default precision past the scale bound would make every `div` without
+	// an explicit precision fail, far from where the context was set.
+	if (context.precision > context.maxScale) {
+		throw new E_ATOM_INVALID_CONTEXT(["precision", context.precision]);
+	}
 	assertContextMode("roundMode", context.roundMode);
 	assertContextMode("quantizeMode", context.quantizeMode);
 	return Object.freeze({ ...context });
@@ -181,5 +220,15 @@ function assertContextMaxDigits(maxDigits: number): void {
 		maxDigits > MAX_DIGITS_CEILING
 	) {
 		throw new E_ATOM_INVALID_CONTEXT(["maxDigits", maxDigits]);
+	}
+}
+
+function assertContextBound(
+	name: string,
+	value: number,
+	ceiling: number,
+): void {
+	if (!Number.isInteger(value) || value < 0 || value > ceiling) {
+		throw new E_ATOM_INVALID_CONTEXT([name, value]);
 	}
 }

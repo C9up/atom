@@ -168,7 +168,10 @@ describe("atom > error codes", () => {
 			caught = error;
 		}
 		expect(caught).toMatchObject({ message: "Division by zero" });
-		expect(caught).toHaveProperty("cause.message", "Division by zero");
+		expect(caught).toHaveProperty(
+			"cause.message",
+			"E_ATOM_DIVISION_BY_ZERO: Division by zero",
+		);
 	});
 
 	it("exports its errors as flare exceptions", () => {

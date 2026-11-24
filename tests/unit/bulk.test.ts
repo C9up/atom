@@ -498,11 +498,76 @@ describe("Atom.bulk — the edges of the plan", () => {
 			try {
 				const plan = new Bulk();
 				const divided = plan.of("1").div(plan.of("0"));
-				expect(() => plan.run({ divided })).toThrow();
+				expect(() => plan.run({ divided })).toThrow(
+					expect.objectContaining({ code: "E_ATOM_DIVISION_BY_ZERO" }),
+				);
 			} finally {
 				__overrideNativeForTesting(undefined);
 			}
 		}
+	});
+});
+
+describe("Atom.bulk — a column belongs to the plan that loaded it", () => {
+	const FOREIGN = expect.objectContaining({
+		code: "E_ATOM_BULK_FOREIGN_COLUMN",
+	});
+
+	/** Run `check` on the native engine, then on the BigInt executor. */
+	async function onEachExecutor(check: () => Promise<void>): Promise<void> {
+		for (const engine of [undefined, null] as const) {
+			__overrideNativeForTesting(engine);
+			try {
+				await check();
+			} finally {
+				__overrideNativeForTesting(undefined);
+			}
+		}
+	}
+
+	it("refuses a column planned on another Bulk, whatever its length", async () => {
+		await onEachExecutor(async () => {
+			const quantities = new Bulk();
+			const prices = new Bulk();
+			const q = quantities.column(["1", "2", "3"]);
+			const p = prices.column(["10"]);
+			const total = q.dot(p).plus(quantities.of("7"));
+			expect(() => quantities.run({ total })).toThrow(FOREIGN);
+			await expect(quantities.runAsync({ total })).rejects.toThrow(FOREIGN);
+			// Neither plan owns both columns.
+			expect(() => prices.run({ total })).toThrow(FOREIGN);
+
+			const same = prices.column(["4"]);
+			expect(() => quantities.run({ wide: same.sum() })).toThrow(FOREIGN);
+			const other = new Bulk();
+			const equal = other.column(["4", "5", "6"]);
+			expect(() => quantities.run({ total: q.dot(equal) })).toThrow(FOREIGN);
+		});
+	});
+
+	it("refuses a column of an outer callback used inside an inner one", () => {
+		expect(() =>
+			bulk((outer) => {
+				const column = outer.column(["1", "2"]);
+				const inner = bulk((b) => ({ total: column.sum().plus(b.of("1")) }));
+				return { total: outer.of(inner.total.toString()) };
+			}),
+		).toThrow(FOREIGN);
+	});
+
+	it("runs a plan over its own columns and scalars of any plan", async () => {
+		await onEachExecutor(async () => {
+			const plan = new Bulk();
+			const q = plan.column(["1", "2", "3"]);
+			const p = plan.column(["10", "20", "30"]);
+			// A scalar carries its value, not a column: it may come from anywhere.
+			const fee = new Bulk().of("7");
+			const outputs = { total: q.dot(p).plus(fee), count: q.sum() };
+			expect(plan.run(outputs).total.toString()).toBe("147");
+			expect((await plan.runAsync(outputs)).count.toString()).toBe("6");
+			// And again: the check leaves nothing behind that a second run trips on.
+			expect(plan.run(outputs).total.toString()).toBe("147");
+		});
 	});
 });
 

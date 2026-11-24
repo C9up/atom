@@ -7,6 +7,7 @@
 //! exists to avoid.
 
 use atom_engine::bulk;
+use atom_engine::engine::{codes, refusal};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -18,8 +19,8 @@ use std::sync::OnceLock;
 /// the scalar literals the program refers to by absolute index. `program` is
 /// six-word bytecode. Returns the scalars the program emitted, in order.
 ///
-/// An overflow of the 128-bit working width is reported with a message opening
-/// `[ATOM_BULK_OVERFLOW]`, which is the caller's signal to re-run the same
+/// An overflow of the 128-bit working width is reported under the code
+/// `E_ATOM_BULK_OVERFLOW`, which is the caller's signal to re-run the same
 /// program on the BigInt executor rather than to give up: the fast path is
 /// allowed to be too narrow, never to be wrong.
 #[napi]
@@ -53,17 +54,11 @@ where
 {
     match catch_unwind(AssertUnwindSafe(run)) {
         Ok(Ok(out)) => Ok(out),
-        Ok(Err(error)) => {
-            let message = error.message();
-            Err(Error::from_reason(if error.is_recoverable() {
-                format!("[ATOM_BULK_OVERFLOW] {message}")
-            } else {
-                message
-            }))
-        }
-        Err(_) => Err(Error::from_reason(
-            "[ATOM_BULK_PANIC] Internal panic in the bulk engine",
-        )),
+        Ok(Err(error)) => Err(Error::from_reason(error.coded())),
+        Err(_) => Err(Error::from_reason(refusal(
+            codes::INTERNAL,
+            "Internal panic in the bulk engine",
+        ))),
     }
 }
 
@@ -74,14 +69,17 @@ mod tests {
     #[test]
     fn a_panic_becomes_an_error_instead_of_unwinding_into_node() {
         let error = guarded(|| panic!("forced")).unwrap_err();
-        assert!(error.reason.contains("ATOM_BULK_PANIC"), "{}", error.reason);
+        assert_eq!(
+            error.reason,
+            "E_ATOM_INTERNAL: Internal panic in the bulk engine"
+        );
     }
 
     #[test]
     fn an_overflow_keeps_the_marker_the_caller_retries_on() {
         let error = guarded(|| Err(bulk::BulkError::Overflow("a test"))).unwrap_err();
         assert!(
-            error.reason.starts_with("[ATOM_BULK_OVERFLOW]"),
+            error.reason.starts_with("E_ATOM_BULK_OVERFLOW: "),
             "{}",
             error.reason
         );

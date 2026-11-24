@@ -17,6 +17,19 @@ namespace {
 // is refused here rather than wrapped. The engine bounds the work itself.
 constexpr double kMaxU32 = 4294967295.0;
 
+// A refusal of this module starts with its code, as the engine's own do
+// (`E_ATOM_<REASON>: message`), so the TypeScript side raises the matching
+// `errors.E_ATOM_*` from the code. A scale or an exponent refusal carries
+// what its TypeScript class prints after "Invalid scale: " or
+// "Invalid exponent: ".
+constexpr const char* kInvalidScale = "E_ATOM_INVALID_SCALE";
+constexpr const char* kInvalidExponent = "E_ATOM_INVALID_EXPONENT";
+constexpr const char* kBadProgram = "E_ATOM_BULK_BAD_PROGRAM";
+
+std::string refusal(const char* code, const std::string& message) {
+  return std::string(code) + ": " + message;
+}
+
 AtomStr view(const std::string& s) {
   return AtomStr{reinterpret_cast<const uint8_t*>(s.data()), s.size()};
 }
@@ -64,10 +77,14 @@ std::optional<int32_t> asI32(double value) {
   return static_cast<int32_t>(value);
 }
 
-uint32_t u32OrThrow(jsi::Runtime& rt, double value, const char* what) {
+std::string notU32(const char* what) {
+  return std::string(what) + " must be an integer in [0, 4294967295]";
+}
+
+uint32_t u32OrThrow(jsi::Runtime& rt, double value, const char* code, const char* what) {
   auto v = asU32(value);
   if (!v) {
-    throw jsi::JSError(rt, std::string(what) + " must be an integer in [0, 4294967295]");
+    throw jsi::JSError(rt, refusal(code, notU32(what)));
   }
   return *v;
 }
@@ -98,14 +115,14 @@ std::pair<const T*, size_t> typedArray(jsi::Runtime& rt, const jsi::Object& arra
       ctor.asObject(rt).getProperty(rt, "name").asString(rt).utf8(rt) == kind;
   auto buffer = array.getProperty(rt, "buffer");
   if (!named || !buffer.isObject() || !buffer.asObject(rt).isArrayBuffer(rt)) {
-    throw jsi::JSError(rt, std::string("expected a ") + kind);
+    throw jsi::JSError(rt, refusal(kBadProgram, std::string("expected a ") + kind));
   }
   auto arrayBuffer = buffer.asObject(rt).getArrayBuffer(rt);
   double offset = array.getProperty(rt, "byteOffset").asNumber();
   double length = array.getProperty(rt, "length").asNumber();
   size_t size = arrayBuffer.size(rt);
   if (offset < 0 || length < 0 || offset + length * sizeof(T) > static_cast<double>(size)) {
-    throw jsi::JSError(rt, std::string("a ") + kind + " beyond its buffer");
+    throw jsi::JSError(rt, refusal(kBadProgram, std::string("a ") + kind + " beyond its buffer"));
   }
   auto base = arrayBuffer.data(rt) + static_cast<size_t>(offset);
   return {reinterpret_cast<const T*>(base), static_cast<size_t>(length)};
@@ -143,7 +160,7 @@ std::string NativeAtom::mul(jsi::Runtime& rt, std::string a, std::string b) {
 }
 
 std::string NativeAtom::div(jsi::Runtime& rt, std::string a, std::string b, double precision, std::string mode) {
-  return orThrow(rt, atom_ffi_div(view(a), view(b), u32OrThrow(rt, precision, "precision"), view(mode)));
+  return orThrow(rt, atom_ffi_div(view(a), view(b), u32OrThrow(rt, precision, kInvalidScale, "precision"), view(mode)));
 }
 
 std::string NativeAtom::rem(jsi::Runtime& rt, std::string a, std::string b) {
@@ -153,13 +170,13 @@ std::string NativeAtom::rem(jsi::Runtime& rt, std::string a, std::string b) {
 std::string NativeAtom::pow(jsi::Runtime& rt, std::string a, double exp, double precision, std::string mode) {
   auto e = asI32(exp);
   if (!e) {
-    throw jsi::JSError(rt, "exp must be a 32-bit integer");
+    throw jsi::JSError(rt, refusal(kInvalidExponent, "exp must be a 32-bit integer"));
   }
-  return orThrow(rt, atom_ffi_pow(view(a), *e, u32OrThrow(rt, precision, "precision"), view(mode)));
+  return orThrow(rt, atom_ffi_pow(view(a), *e, u32OrThrow(rt, precision, kInvalidScale, "precision"), view(mode)));
 }
 
 std::string NativeAtom::sqrt(jsi::Runtime& rt, std::string a, double precision) {
-  return orThrow(rt, atom_ffi_sqrt(view(a), u32OrThrow(rt, precision, "precision")));
+  return orThrow(rt, atom_ffi_sqrt(view(a), u32OrThrow(rt, precision, kInvalidScale, "precision")));
 }
 
 std::string NativeAtom::sum(jsi::Runtime& rt, std::vector<std::string> values) {
@@ -180,7 +197,7 @@ double NativeAtom::cmp(jsi::Runtime& rt, std::string a, std::string b) {
 std::vector<std::string> NativeAtom::runBulk(jsi::Runtime& rt, jsi::Object values, double rows, jsi::Object program) {
   auto [data, count] = typedArray<int64_t>(rt, values, "BigInt64Array");
   auto [code, codeCount] = typedArray<int32_t>(rt, program, "Int32Array");
-  return lines(orThrow(rt, atom_ffi_run_bulk(data, count, u32OrThrow(rt, rows, "rows"), code, codeCount)));
+  return lines(orThrow(rt, atom_ffi_run_bulk(data, count, u32OrThrow(rt, rows, kBadProgram, "rows"), code, codeCount)));
 }
 
 AsyncPromise<std::vector<std::string>> NativeAtom::runBulkAsync(
@@ -191,7 +208,7 @@ AsyncPromise<std::vector<std::string>> NativeAtom::runBulkAsync(
   auto [code, codeCount] = typedArray<int32_t>(rt, program, "Int32Array");
   auto r = asU32(rows);
   if (!r) {
-    promise.reject(Error("rows must be an integer in [0, 4294967295]"));
+    promise.reject(Error(refusal(kBadProgram, notU32("rows"))));
     return promise;
   }
   std::vector<int64_t> column(data, data + count);

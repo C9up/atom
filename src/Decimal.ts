@@ -1,4 +1,5 @@
 import {
+	defaultMaxScale,
 	defaultPrecision,
 	defaultQuantizeMode,
 	defaultRoundMode,
@@ -21,6 +22,7 @@ import {
 } from "./errors.js";
 import {
 	addTs,
+	assertExponentFits,
 	assertIntegerDigits,
 	assertPowerFits,
 	assertRoundMode,
@@ -792,6 +794,9 @@ function decimalStringFromNumber(value: number): string {
 	if (coefficient === undefined || !Number.isInteger(exponent)) {
 		throw new E_ATOM_INVALID_DECIMAL([`Invalid decimal: ${value}`]);
 	}
+	// The same bound as the string form, so a value parses or throws alike on
+	// either side of a JSON boundary.
+	assertExponentFits(exponent);
 	const negative = coefficient.startsWith("-");
 	const unsigned =
 		negative || coefficient.startsWith("+")
@@ -844,7 +849,7 @@ function fromIntScale(int: bigint, scale: number): Decimal {
 }
 
 function assertScale(scale: number): void {
-	if (!Number.isInteger(scale) || scale < 0 || scale > MAX_SCALE) {
+	if (!Number.isInteger(scale) || scale < 0 || scale > defaultMaxScale()) {
 		throw new E_ATOM_INVALID_SCALE([scale]);
 	}
 }

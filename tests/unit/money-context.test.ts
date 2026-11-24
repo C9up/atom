@@ -36,6 +36,8 @@ describe("Atom context", () => {
 			roundMode: "half-up",
 			quantizeMode: "half-up",
 			maxDigits: 20_000,
+			maxExponent: 100,
+			maxScale: 10_000,
 		});
 
 		configureAtomContext({ precision: 4, roundMode: "ceil" });

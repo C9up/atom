@@ -10,6 +10,22 @@ engine is the fallback.
 pnpm add @c9up/atom
 ```
 
+In Node, the Rust engine is a prebuilt binary. Each platform's binary is its own npm package, which `@c9up/atom` lists as an optional dependency at its exact version:
+
+| Platform | Package |
+|---|---|
+| Linux x64 (glibc) | `@c9up/atom-linux-x64-gnu` |
+| Linux arm64 (glibc) | `@c9up/atom-linux-arm64-gnu` |
+| macOS x64 | `@c9up/atom-darwin-x64` |
+| macOS arm64 | `@c9up/atom-darwin-arm64` |
+| Windows x64 | `@c9up/atom-win32-x64-msvc` |
+
+Your package manager installs only the one that matches the machine (`os`, `cpu` and `libc` fields), so an install downloads one binary and needs no Rust toolchain. An install run with optional dependencies omitted (`--no-optional`, `--omit=optional`) skips it. atom still works then, on the TypeScript engine; `nativeAtom()` throws `E_ATOM_ENGINE_NOT_FOUND`, naming the package to install, with the load error as its `cause`.
+
+The WASM engine for browsers and the sources the phone build compiles are platform-neutral: they stay in `@c9up/atom`.
+
+In a checkout of this repository, `pnpm build:napi` builds `index.<platform>.node` at the package root, and atom loads that file before looking for the platform package. After a version bump, `node scripts/platform-packages.mjs` rewrites the platform packages' manifests (`npm/<platform>/package.json`) and the optional dependencies; CI fails when they are stale.
+
 ## Decimal
 
 ```ts

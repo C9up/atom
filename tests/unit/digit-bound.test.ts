@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	Atom,
 	Bulk,
@@ -245,6 +245,12 @@ describe("Atom.bulk — the same bound", () => {
 });
 
 describe("Decimal — work that grows with the input, not with its square", () => {
+	// These measure the cost of the widest scales, which an application
+	// reaches only by raising the exponent bound.
+	beforeEach(() => {
+		configureAtomContext({ maxExponent: 10_000 });
+	});
+
 	it("normalises a long run of fractional zeros in time linear in its length", () => {
 		// Eight bytes of JSON expand to `0.<9 999 zeros>1`, and every value is
 		// normalised on the way in: a trailing-zero strip that retried from

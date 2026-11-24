@@ -1,4 +1,10 @@
-import { defaultMaxDigits, isRoundMode } from "./context.js";
+import {
+	defaultMaxDigits,
+	defaultMaxExponent,
+	defaultMaxScale,
+	isRoundMode,
+	MAX_SCALE,
+} from "./context.js";
 import {
 	E_ATOM_DECIMAL_TOO_LARGE,
 	E_ATOM_DIVISION_BY_ZERO,
@@ -30,8 +36,7 @@ export interface ParsedDecimal {
 	scale: number;
 }
 
-/** The most fractional digits a value, a precision or a scale may ask for. */
-export const MAX_SCALE = 10_000;
+export { MAX_SCALE };
 
 function tooLarge(what: string): Error {
 	return new E_ATOM_DECIMAL_TOO_LARGE([
@@ -74,14 +79,18 @@ export function assertIntegerDigits(value: bigint): void {
 }
 
 /**
- * How far an exponent may move the decimal point.
- *
- * An expression like `1E1000000` is syntactically fine and would expand to a
- * megabyte of zeroes before anything could reject it. The bound is far past any
- * real monetary or measurement scale, and refuses the pathological input as
- * input rather than as an out-of-memory later.
+ * Refuse an exponent past the context's `maxExponent` before a single zero
+ * is written: `1e-9990` is six bytes of input and ten thousand digits of work
+ * in every operation that later reads the value.
  */
-const MAX_EXPONENT = 10_000;
+export function assertExponentFits(exponent: number): void {
+	const bound = defaultMaxExponent();
+	if (!(Math.abs(exponent) <= bound)) {
+		throw new E_ATOM_DECIMAL_TOO_LARGE([
+			`An exponent past the bound of ${bound} (configureAtomContext({ maxExponent }) sets it)`,
+		]);
+	}
+}
 
 /**
  * Expand scientific notation into plain decimal text.
@@ -102,12 +111,15 @@ function expandScientific(input: string): string {
 	}
 
 	const exponent = Number(exponentRaw);
-	if (!Number.isInteger(exponent) || Math.abs(exponent) > MAX_EXPONENT) {
-		throw new E_ATOM_INVALID_DECIMAL([`Invalid decimal: ${input}`]);
-	}
+	assertExponentFits(exponent);
 
 	const digits = `${wholeRaw}${fracRaw}`;
 	const pointIndex = wholeRaw.length + exponent;
+	// The scale the expansion would have, refused before it is written out.
+	const scale = Math.max(digits.length - pointIndex, 0);
+	if (scale > defaultMaxScale()) {
+		throw new E_ATOM_INVALID_SCALE([scale]);
+	}
 
 	let expanded: string;
 	if (pointIndex <= 0) {
@@ -151,9 +163,9 @@ export function parseDecimal(input: string): ParsedDecimal {
 		throw new E_ATOM_INVALID_DECIMAL([`Invalid decimal: ${input}`]);
 	}
 	// Both bounds are checked on the text, before any BigInt is built: a scale
-	// past MAX_SCALE would otherwise be paid for by aligning the other operand
+	// past the bound would otherwise be paid for by aligning the other operand
 	// to it, one multiplication by ten per digit.
-	if (frac.length > MAX_SCALE) {
+	if (frac.length > defaultMaxScale()) {
 		throw new E_ATOM_INVALID_SCALE([frac.length]);
 	}
 	if (significantDigits(whole, frac) > defaultMaxDigits()) {
@@ -387,7 +399,7 @@ export function assertPowerFits(base: ParsedDecimal, exp: number): void {
 		scale--;
 	}
 	const steps = Math.abs(exp);
-	if (exp > 0 && scale * steps > MAX_SCALE) {
+	if (exp > 0 && scale * steps > defaultMaxScale()) {
 		throw new E_ATOM_INVALID_SCALE([scale * steps]);
 	}
 	const text = int.toString();

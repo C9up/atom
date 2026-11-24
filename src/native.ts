@@ -1,7 +1,10 @@
 /**
  * Universal engine loader — auto-detects Node (NAPI) vs Browser (WASM).
  *
- * - **Node**: loads the prebuilt `.node` binary via `createRequire` (sync, fast)
+ * - **Node**: loads the prebuilt `.node` binary via `createRequire` (sync, fast):
+ *   the local build at the package root first (`pnpm build:napi` in a
+ *   checkout), then the platform package `@c9up/atom-<suffix>` that an install
+ *   of atom carries as an optional dependency
  * - **Browser**: loads the `.wasm` binary via the wasm-bindgen JS glue (async init on
  *   first module import via top-level await, then sync function calls)
  *
@@ -23,12 +26,27 @@ import { E_ATOM_ENGINE_NOT_FOUND, E_ATOM_NAPI_DISABLED } from "./errors.js";
  */
 export type NativeAtom = typeof import("./native/generated.js");
 
+/**
+ * The npm name the platform packages derive from: `@c9up/atom-<suffix>`, one
+ * per target, each an optional dependency pinned to this version.
+ */
+const PACKAGE_NAME = "@c9up/atom";
+
 let native: NativeAtom | undefined;
 let loadError: unknown;
+/** What to do about a missing Node engine, once the load has been tried. */
+let nodeFix = "cd packages/atom && pnpm build:napi";
 
 const isNode =
 	typeof globalThis.process !== "undefined" &&
 	typeof globalThis.process.versions?.node === "string";
+
+/** Whether `cause` is Node's "no such module" (and not a module that failed to load). */
+function isModuleNotFound(cause: unknown): boolean {
+	return (
+		cause instanceof Error && Reflect.get(cause, "code") === "MODULE_NOT_FOUND"
+	);
+}
 
 if (isNode) {
 	// Node path: load NAPI binary (sync).
@@ -50,8 +68,25 @@ if (isNode) {
 		};
 
 		const suffix = platformMap[`${platform}-${arch}`];
-		if (suffix) {
-			native = nodeRequire(join(currentDir, `../index.${suffix}.node`));
+		if (suffix === undefined) {
+			nodeFix = `no prebuilt binary for ${platform}-${arch}; atom ships one for ${Object.keys(platformMap).join(", ")}.`;
+		} else {
+			try {
+				native = nodeRequire(join(currentDir, `../index.${suffix}.node`));
+			} catch (local) {
+				// A local build that exists but fails to load is a broken build,
+				// reported as is rather than papered over by the package.
+				if (!isModuleNotFound(local)) {
+					nodeFix = `index.${suffix}.node failed to load. Rebuild it: cd packages/atom && pnpm build:napi`;
+					throw local;
+				}
+				const platformPackage = `${PACKAGE_NAME}-${suffix}`;
+				nodeFix =
+					`install ${platformPackage} at the exact version of ${PACKAGE_NAME}: it is the optional dependency that carries the ${suffix} binary, ` +
+					"and an install that omits optional dependencies skips it. " +
+					"In a checkout of atom, build it instead: pnpm build:napi.";
+				native = nodeRequire(platformPackage);
+			}
 		}
 	} catch (e) {
 		loadError = e;
@@ -84,13 +119,17 @@ export function nativeAtom(): NativeAtom {
 		return overrideNative;
 	}
 	if (!native) {
-		throw new E_ATOM_ENGINE_NOT_FOUND([
-			`Decimal engine not available.\n` +
-				`  Environment: ${isNode ? "Node" : "Browser"}\n` +
-				`  Reason: ${loadError ?? "binary not found"}\n` +
-				`  Fix (Node): cd packages/atom && pnpm build:napi\n` +
-				`  Fix (Browser): cd packages/atom && pnpm build:wasm`,
-		]);
+		// The load error names paths on the host: it travels as the `cause`.
+		throw new E_ATOM_ENGINE_NOT_FOUND(
+			[
+				`Decimal engine not available.\n` +
+					`  Environment: ${isNode ? "Node" : "Browser"}\n` +
+					(isNode
+						? `  Fix: ${nodeFix}`
+						: "  Fix: cd packages/atom && pnpm build:wasm"),
+			],
+			{ cause: loadError },
+		);
 	}
 	return native;
 }

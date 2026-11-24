@@ -11,8 +11,8 @@
  * the scalar literals the program refers to by absolute index. `program` is
  * six-word bytecode. Returns the scalars the program emitted, in order.
  *
- * An overflow of the 128-bit working width is reported with a message opening
- * `[ATOM_BULK_OVERFLOW]`, which is the caller's signal to re-run the same
+ * An overflow of the 128-bit working width is reported under the code
+ * `E_ATOM_BULK_OVERFLOW`, which is the caller's signal to re-run the same
  * program on the BigInt executor rather than to give up: the fast path is
  * allowed to be too narrow, never to be wrong.
  */

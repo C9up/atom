@@ -63,12 +63,6 @@ pub fn cmp(a: &str, b: &str) -> Result<i32, JsValue> {
 /// TypeScript produces anyway.
 #[wasm_bindgen(js_name = runBulk)]
 pub fn run_bulk(values: Vec<i64>, rows: u32, program: Vec<i32>) -> Result<Vec<String>, JsValue> {
-    atom_engine::bulk::run(&values, rows as usize, &program).map_err(|error| {
-        let message = error.message();
-        JsValue::from_str(&if error.is_recoverable() {
-            format!("[ATOM_BULK_OVERFLOW] {message}")
-        } else {
-            message
-        })
-    })
+    atom_engine::bulk::run(&values, rows as usize, &program)
+        .map_err(|error| JsValue::from_str(&error.coded()))
 }

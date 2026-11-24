@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 /// The most fractional digits a precision or a scale may ask for — kept in
-/// step with `MAX_SCALE` in `src/math.ts`.
+/// step with `MAX_SCALE` in `src/context.ts`, the ceiling of the context's
+/// `maxScale`.
 pub const MAX_SCALE: u32 = 10_000;
 
 /// The most significant digits a power may produce: the highest `maxDigits`
@@ -13,6 +14,30 @@ pub const MAX_SCALE: u32 = 10_000;
 /// first; this one keeps the engine from being asked for a power that would
 /// take minutes whoever calls it.
 const MAX_POWER_DIGITS: f64 = 1_000_000.0;
+
+/// The codes the engine refuses under.
+///
+/// Every refusal message starts with its code, `E_ATOM_<REASON>: `, so each
+/// binding (N-API, WASM, the phone's C ABI) hands it to JavaScript as is, and
+/// the TypeScript side raises the matching `errors.E_ATOM_*` from the code
+/// rather than from the wording. A code whose TypeScript class takes values (a
+/// rounding mode, a scale, two lengths) carries those values as its message,
+/// so both engines render the same text.
+pub mod codes {
+    pub const DIVISION_BY_ZERO: &str = "E_ATOM_DIVISION_BY_ZERO";
+    pub const NEGATIVE_SQRT: &str = "E_ATOM_NEGATIVE_SQRT";
+    pub const INVALID_ROUNDING_MODE: &str = "E_ATOM_INVALID_ROUNDING_MODE";
+    pub const INVALID_SCALE: &str = "E_ATOM_INVALID_SCALE";
+    pub const LENGTH_MISMATCH: &str = "E_ATOM_LENGTH_MISMATCH";
+    pub const INVALID_DECIMAL: &str = "E_ATOM_INVALID_DECIMAL";
+    pub const DECIMAL_TOO_LARGE: &str = "E_ATOM_DECIMAL_TOO_LARGE";
+    pub const INTERNAL: &str = "E_ATOM_INTERNAL";
+}
+
+/// A refusal under its code: `CODE: message`.
+pub fn refusal(code: &str, message: impl std::fmt::Display) -> String {
+    format!("{code}: {message}")
+}
 
 /// How a quotient that does not land on a digit is brought to one.
 ///
@@ -35,7 +60,7 @@ impl RoundMode {
             "ceil" => Ok(Self::Ceil),
             "half-up" => Ok(Self::HalfUp),
             "half-even" => Ok(Self::HalfEven),
-            _ => Err(format!("Unknown rounding mode: {name}")),
+            _ => Err(refusal(codes::INVALID_ROUNDING_MODE, name)),
         }
     }
 
@@ -75,7 +100,7 @@ fn round_quotient(numerator: BigInt, denominator: BigInt, mode: RoundMode) -> Bi
 
 fn assert_precision(precision: u32) -> Result<(), String> {
     if precision > MAX_SCALE {
-        return Err(format!("Invalid scale: {precision}"));
+        return Err(refusal(codes::INVALID_SCALE, precision));
     }
     Ok(())
 }
@@ -169,10 +194,9 @@ pub fn sum(values: &[String]) -> Result<String, String> {
 /// a portfolio nobody holds.
 pub fn dot(a: &[String], b: &[String]) -> Result<String, String> {
     if a.len() != b.len() {
-        return Err(format!(
-            "Mismatched batch lengths: {} and {}",
-            a.len(),
-            b.len()
+        return Err(refusal(
+            codes::LENGTH_MISMATCH,
+            format!("{} and {}", a.len(), b.len()),
         ));
     }
 
@@ -194,7 +218,7 @@ pub fn div(a: &str, b: &str, precision: u32, mode: &str) -> Result<String, Strin
     let da = parse_decimal(a)?;
     let db = parse_decimal(b)?;
     if db.int.is_zero() {
-        return Err("Division by zero".to_string());
+        return Err(refusal(codes::DIVISION_BY_ZERO, "Division by zero"));
     }
 
     let ten_pow_precision = pow10(precision);
@@ -217,7 +241,7 @@ pub fn rem(a: &str, b: &str) -> Result<String, String> {
     let da = parse_decimal(a)?;
     let db = parse_decimal(b)?;
     if db.int.is_zero() {
-        return Err("Division by zero".to_string());
+        return Err(refusal(codes::DIVISION_BY_ZERO, "Division by zero"));
     }
     let (ai, bi, scale) = align_scale(&da, &db);
     Ok(format_decimal(ai % bi, scale))
@@ -295,7 +319,10 @@ fn check_power_size(base: &Decimal, exp: i32) -> Result<(), String> {
             .checked_mul(steps)
             .is_none_or(|result_scale| result_scale > MAX_SCALE)
     {
-        return Err("Invalid scale: a power's scale is past the largest scale".to_string());
+        return Err(refusal(
+            codes::INVALID_SCALE,
+            "a power's scale is past the largest scale",
+        ));
     }
     // |int| lies in [2^(bits-1), 2^bits).
     let bits = base.int.bits() as f64;
@@ -305,7 +332,10 @@ fn check_power_size(base: &Decimal, exp: i32) -> Result<(), String> {
     let too_large = steps * at_least > MAX_POWER_DIGITS
         || (exp < 0 && steps * (f64::from(scale) - at_most) > MAX_POWER_DIGITS);
     if too_large {
-        return Err("A power past the bound of significant digits".to_string());
+        return Err(refusal(
+            codes::DECIMAL_TOO_LARGE,
+            "A power past the bound of significant digits",
+        ));
     }
     Ok(())
 }
@@ -330,7 +360,10 @@ pub fn sqrt(a: &str, precision: u32) -> Result<String, String> {
     assert_precision(precision)?;
     let parsed = parse_decimal(a)?;
     if parsed.int < BigInt::from(0) {
-        return Err("Cannot compute sqrt of a negative decimal".to_string());
+        return Err(refusal(
+            codes::NEGATIVE_SQRT,
+            "Cannot compute sqrt of a negative decimal",
+        ));
     }
     if parsed.int.is_zero() {
         return Ok("0".to_string());
@@ -370,10 +403,17 @@ pub fn cmp(a: &str, b: &str) -> Result<i32, String> {
     })
 }
 
+fn invalid_decimal(input: &str) -> String {
+    refusal(codes::INVALID_DECIMAL, format!("Invalid decimal: {input}"))
+}
+
 pub(crate) fn parse_decimal(input: &str) -> Result<Decimal, String> {
     let s = input.trim();
     if s.is_empty() {
-        return Err("Invalid decimal: empty string".to_string());
+        return Err(refusal(
+            codes::INVALID_DECIMAL,
+            "Invalid decimal: empty string",
+        ));
     }
 
     let mut sign = 1i32;
@@ -388,28 +428,28 @@ pub(crate) fn parse_decimal(input: &str) -> Result<Decimal, String> {
 
     let parts: Vec<&str> = body.split('.').collect();
     if parts.len() > 2 {
-        return Err(format!("Invalid decimal: {}", input));
+        return Err(invalid_decimal(input));
     }
 
     let whole = parts[0];
     let frac = if parts.len() == 2 { parts[1] } else { "" };
 
     if !whole.chars().all(|c| c.is_ascii_digit()) || !frac.chars().all(|c| c.is_ascii_digit()) {
-        return Err(format!("Invalid decimal: {}", input));
+        return Err(invalid_decimal(input));
     }
 
     let digits = format!("{}{}", whole, frac);
     if digits.is_empty() {
-        return Err(format!("Invalid decimal: {}", input));
+        return Err(invalid_decimal(input));
     }
     let mut int = digits
         .parse::<BigInt>()
-        .map_err(|_| format!("Invalid decimal: {}", input))?;
+        .map_err(|_| invalid_decimal(input))?;
     if sign < 0 {
         int = -int;
     }
 
-    let scale = u32::try_from(frac.len()).map_err(|_| format!("Invalid scale: {}", frac.len()))?;
+    let scale = u32::try_from(frac.len()).map_err(|_| refusal(codes::INVALID_SCALE, frac.len()))?;
     Ok(Decimal { int, scale })
 }
 
@@ -734,5 +774,51 @@ mod tests {
         assert!(add("1.2.3", "1").is_err());
         assert!(add("abc", "1").is_err());
         assert!(add("1a", "1").is_err());
+    }
+
+    #[test]
+    fn every_refusal_starts_with_its_code() {
+        let cases = [
+            (
+                div("1", "0", 2, "trunc"),
+                "E_ATOM_DIVISION_BY_ZERO: Division by zero",
+            ),
+            (rem("1", "0"), "E_ATOM_DIVISION_BY_ZERO: Division by zero"),
+            (
+                sqrt("-1", 2),
+                "E_ATOM_NEGATIVE_SQRT: Cannot compute sqrt of a negative decimal",
+            ),
+            (
+                div("1", "3", 2, "sideways"),
+                "E_ATOM_INVALID_ROUNDING_MODE: sideways",
+            ),
+            (
+                div("1", "3", MAX_SCALE + 1, "trunc"),
+                "E_ATOM_INVALID_SCALE: 10001",
+            ),
+            (
+                pow("0.1", 10_001, 2, "trunc"),
+                "E_ATOM_INVALID_SCALE: a power's scale is past the largest scale",
+            ),
+            (
+                pow("2", i32::MAX, 2, "trunc"),
+                "E_ATOM_DECIMAL_TOO_LARGE: A power past the bound of significant digits",
+            ),
+            (
+                add("", "1"),
+                "E_ATOM_INVALID_DECIMAL: Invalid decimal: empty string",
+            ),
+            (
+                add("1.2.3", "1"),
+                "E_ATOM_INVALID_DECIMAL: Invalid decimal: 1.2.3",
+            ),
+            (
+                dot(&strings(&["1", "2"]), &strings(&["3"])),
+                "E_ATOM_LENGTH_MISMATCH: 2 and 1",
+            ),
+        ];
+        for (result, expected) in cases {
+            assert_eq!(result.unwrap_err(), expected);
+        }
     }
 }

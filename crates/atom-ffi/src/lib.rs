@@ -9,6 +9,7 @@
 //! unwinds across the boundary: it becomes an error too.
 
 use atom_engine::bulk;
+use atom_engine::engine::{codes, refusal};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 /// A borrowed UTF-8 string: `len` bytes at `ptr`.
@@ -47,7 +48,7 @@ unsafe fn text<'a>(s: &AtomStr) -> Result<&'a str, String> {
         return Ok("");
     }
     std::str::from_utf8(std::slice::from_raw_parts(s.ptr, s.len))
-        .map_err(|_| "Invalid decimal: not UTF-8".to_string())
+        .map_err(|_| refusal(codes::INVALID_DECIMAL, "Invalid decimal: not UTF-8"))
 }
 
 /// # Safety
@@ -65,7 +66,7 @@ unsafe fn texts(items: *const AtomStr, count: usize) -> Result<Vec<String>, Stri
 /// Panics must not unwind across the C boundary.
 fn guarded(f: impl FnOnce() -> Result<String, String>) -> AtomOut {
     out(catch_unwind(AssertUnwindSafe(f))
-        .unwrap_or_else(|_| Err("Internal panic in atom engine".to_string())))
+        .unwrap_or_else(|_| Err(refusal(codes::INTERNAL, "Internal panic in atom engine"))))
 }
 
 /// # Safety
@@ -188,11 +189,11 @@ pub unsafe extern "C" fn atom_ffi_run_bulk(
             bulk::run(values, rows as usize, program)
         })) {
             Ok(Ok(scalars)) => Ok(scalars.join("\n")),
-            Ok(Err(error)) if error.is_recoverable() => {
-                Err(format!("[ATOM_BULK_OVERFLOW] {}", error.message()))
-            }
-            Ok(Err(error)) => Err(error.message()),
-            Err(_) => Err("[ATOM_BULK_PANIC] Internal panic in the bulk engine".to_string()),
+            Ok(Err(error)) => Err(error.coded()),
+            Err(_) => Err(refusal(
+                codes::INTERNAL,
+                "Internal panic in the bulk engine",
+            )),
         },
     )
 }
@@ -258,7 +259,10 @@ mod tests {
         };
         assert_eq!(
             take(unsafe { atom_ffi_add(bad, s("1")) }),
-            (false, "Invalid decimal: not UTF-8".into())
+            (
+                false,
+                "E_ATOM_INVALID_DECIMAL: Invalid decimal: not UTF-8".into()
+            )
         );
     }
 }

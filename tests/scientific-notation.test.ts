@@ -15,7 +15,9 @@ describe("scientific notation", () => {
 		expect(new Decimal("1E-10").plus("1E-10").toString()).toBe("0.0000000002");
 	});
 	it("refuses a pathological exponent instead of expanding it", () => {
-		expect(() => new Decimal("1E1000000")).toThrow(/Invalid decimal/);
+		expect(() => new Decimal("1E1000000")).toThrow(
+			expect.objectContaining({ code: "E_ATOM_DECIMAL_TOO_LARGE" }),
+		);
 	});
 	it("still refuses genuine garbage", () => {
 		expect(() => new Decimal("1E")).toThrow(/Invalid decimal/);

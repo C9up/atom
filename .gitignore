@@ -10,6 +10,8 @@ dist/
 # The binary is platform-specific and gets staled silently if tracked in git;
 # consumers reproduce it locally or via the package's CI workflow.
 *.node
+# The publish job copies the licence into each platform package it publishes.
+npm/*/LICENSE
 
 coverage/
 wasm/*.js

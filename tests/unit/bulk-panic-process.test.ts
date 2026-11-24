@@ -63,8 +63,8 @@ describe("runBulk across the N-API boundary", () => {
 		const { status, signal, report } = runChild(true);
 		expect({ status, signal }).toEqual({ status: 0, signal: null });
 		expect(report).toEqual([
-			"[ATOM_BULK_PANIC] Internal panic in the bulk engine",
-			"[ATOM_BULK_PANIC] Internal panic in the bulk engine",
+			"E_ATOM_INTERNAL: Internal panic in the bulk engine",
+			"E_ATOM_INTERNAL: Internal panic in the bulk engine",
 		]);
 	});
 

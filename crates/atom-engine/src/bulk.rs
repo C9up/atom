@@ -62,12 +62,27 @@ pub enum BulkError {
 }
 
 impl BulkError {
-    pub fn message(&self) -> String {
+    /// The code the TypeScript side reads back. `E_ATOM_BULK_OVERFLOW` is not
+    /// a refusal but the signal to re-run on the BigInt executor; the others
+    /// are raised as the `errors.E_ATOM_*` they name.
+    pub fn code(&self) -> &'static str {
         match self {
-            Self::Overflow(where_) => format!("bulk: value overflowed 128 bits in {where_}"),
-            Self::DivisionByZero => "bulk: division by zero".to_string(),
-            Self::BadProgram(why) => format!("bulk: {why}"),
+            Self::Overflow(_) => "E_ATOM_BULK_OVERFLOW",
+            Self::DivisionByZero => crate::engine::codes::DIVISION_BY_ZERO,
+            Self::BadProgram(_) => "E_ATOM_BULK_BAD_PROGRAM",
         }
+    }
+
+    /// What every binding hands to JavaScript: `CODE: message`. A bad
+    /// program's message is the reason alone, which its TypeScript class
+    /// takes; a division by zero says what the decimal engine says.
+    pub fn coded(&self) -> String {
+        let message = match self {
+            Self::Overflow(where_) => format!("value overflowed 128 bits in {where_}"),
+            Self::DivisionByZero => "Division by zero".to_string(),
+            Self::BadProgram(why) => why.clone(),
+        };
+        crate::engine::refusal(self.code(), message)
     }
 
     /// Whether re-running on the BigInt executor would help.
@@ -1351,5 +1366,21 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(error, BulkError::BadProgram(_)));
+    }
+
+    #[test]
+    fn every_bulk_error_crosses_under_its_code() {
+        assert_eq!(
+            BulkError::Overflow("sum").coded(),
+            "E_ATOM_BULK_OVERFLOW: value overflowed 128 bits in sum"
+        );
+        assert_eq!(
+            BulkError::DivisionByZero.coded(),
+            "E_ATOM_DIVISION_BY_ZERO: Division by zero"
+        );
+        assert_eq!(
+            BulkError::BadProgram("unknown opcode 99".to_string()).coded(),
+            "E_ATOM_BULK_BAD_PROGRAM: unknown opcode 99"
+        );
     }
 }

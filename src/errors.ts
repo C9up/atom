@@ -91,8 +91,9 @@ export const E_ATOM_INVALID_ROUNDING_MODE = createError<[mode: string]>(
 );
 
 /**
- * A result past the bound of significant digits: the configured one
- * (`configureAtomContext({ maxDigits })`), or the Rust engine's own.
+ * A value or a result past the bound of significant digits: the configured
+ * one (`configureAtomContext({ maxDigits })`), or the Rust engine's own; or a
+ * scientific literal whose exponent is past `maxExponent`.
  */
 export const E_ATOM_DECIMAL_TOO_LARGE = createError<[message: string]>(
 	"%s",
@@ -239,6 +240,16 @@ export const E_ATOM_BULK_LENGTH_MISMATCH = createError<
 >(
 	"This plan holds columns of %d values; got %d",
 	"E_ATOM_BULK_LENGTH_MISMATCH",
+);
+
+/**
+ * A planned value that reads a column another `Bulk` loaded. Each plan lays
+ * out only its own columns, at its own length, so the two executors would
+ * answer a mixed plan with two different wrong figures.
+ */
+export const E_ATOM_BULK_FOREIGN_COLUMN = createError(
+	"A planned value reads a column of another plan; load the column on the plan that runs it",
+	"E_ATOM_BULK_FOREIGN_COLUMN",
 );
 
 /** A column with no value. */

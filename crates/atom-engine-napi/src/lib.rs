@@ -62,7 +62,7 @@ pub fn cmp(a: String, b: String) -> Result<i32> {
     match result {
         Ok(Ok(value)) => Ok(value),
         Ok(Err(e)) => Err(Error::from_reason(e)),
-        Err(_) => Err(Error::from_reason("Internal panic in atom engine")),
+        Err(_) => Err(Error::from_reason(internal_panic())),
     }
 }
 
@@ -74,6 +74,14 @@ where
     match result {
         Ok(Ok(value)) => Ok(value),
         Ok(Err(e)) => Err(Error::from_reason(e)),
-        Err(_) => Err(Error::from_reason("Internal panic in atom engine")),
+        Err(_) => Err(Error::from_reason(internal_panic())),
     }
+}
+
+/// A panic caught at the boundary: `E_ATOM_INTERNAL`.
+fn internal_panic() -> String {
+    atom_engine::engine::refusal(
+        atom_engine::engine::codes::INTERNAL,
+        "Internal panic in atom engine",
+    )
 }

@@ -24,14 +24,13 @@
  *   })
  */
 
-import { defaultPrecision, defaultRoundMode } from "./context.js";
 import {
-	Decimal,
-	type DecimalInput,
-	MAX_EXPONENT_ABS,
-	MAX_SCALE,
-} from "./Decimal.js";
-import { engineError } from "./engineErrors.js";
+	defaultMaxScale,
+	defaultPrecision,
+	defaultRoundMode,
+} from "./context.js";
+import { Decimal, type DecimalInput, MAX_EXPONENT_ABS } from "./Decimal.js";
+import { engineError, splitEngineMessage } from "./engineErrors.js";
 import {
 	E_ATOM_BULK_BAD_EXPONENT,
 	E_ATOM_BULK_BAD_INDEX,
@@ -41,6 +40,7 @@ import {
 	E_ATOM_BULK_BAD_PROGRAM,
 	E_ATOM_BULK_BAD_SCALE,
 	E_ATOM_BULK_EMPTY_COLUMN,
+	E_ATOM_BULK_FOREIGN_COLUMN,
 	E_ATOM_BULK_LENGTH_MISMATCH,
 	E_ATOM_BULK_LOST_OUTPUT,
 	E_ATOM_BULK_NO_LENGTH,
@@ -128,6 +128,8 @@ interface PlanNode {
 	 * It also left two descriptions of one column free to disagree.
 	 */
 	readonly parsed?: readonly ParsedDecimal[];
+	/** Present only on column loads: the plan that loaded the column. */
+	readonly owner?: Bulk;
 	/**
 	 * Compiler scratch: which compilation last touched this node, and the
 	 * position it was given in that one. Kept on the node because the
@@ -233,8 +235,9 @@ function column(
  */
 function precisionOf(options: BulkDivOptions): number {
 	const precision = options.precision ?? defaultPrecision();
-	if (!Number.isInteger(precision) || precision < 0 || precision > MAX_SCALE) {
-		throw new E_ATOM_BULK_BAD_PRECISION([MAX_SCALE, precision]);
+	const bound = defaultMaxScale();
+	if (!Number.isInteger(precision) || precision < 0 || precision > bound) {
+		throw new E_ATOM_BULK_BAD_PRECISION([bound, precision]);
 	}
 	return precision;
 }
@@ -593,7 +596,7 @@ export class Bulk {
 		values: Iterable<string | number | bigint>,
 		scale: number,
 	): BulkColumn {
-		if (!Number.isInteger(scale) || scale < 0 || scale > MAX_SCALE) {
+		if (!Number.isInteger(scale) || scale < 0 || scale > defaultMaxScale()) {
 			throw new E_ATOM_BULK_BAD_SCALE([scale]);
 		}
 		return this.#load(
@@ -618,6 +621,7 @@ export class Bulk {
 			imm0: 0,
 			imm1: 0,
 			parsed,
+			owner: this,
 			stamp: 0,
 			slot: -1,
 		});
@@ -639,7 +643,7 @@ export class Bulk {
 	run<T extends Readonly<Record<string, BulkScalar>>>(
 		outputs: T,
 	): { [K in keyof T]: Decimal } {
-		return collect(outputs, this.#execute(rootsOf(outputs)));
+		return collect(outputs, this.#execute(this.#rootsOf(outputs)));
 	}
 
 	/**
@@ -651,7 +655,7 @@ export class Bulk {
 	async runAsync<T extends Readonly<Record<string, BulkScalar>>>(
 		outputs: T,
 	): Promise<{ [K in keyof T]: Decimal }> {
-		const roots = rootsOf(outputs);
+		const roots = this.#rootsOf(outputs);
 		const engine = tryNativeAtomAsync();
 		if (engine !== undefined) {
 			const rows = this.#rows ?? 0;
@@ -672,6 +676,30 @@ export class Bulk {
 			}
 		}
 		return this.run(outputs);
+	}
+
+	/**
+	 * The plan nodes `outputs` asks for, once every column they read is known
+	 * to be one this plan loaded. Both executors lay a column out at this
+	 * plan's row count: a column of another plan, at another length, was read
+	 * from the wrong cells by one and padded with zeros by the other.
+	 */
+	#rootsOf(outputs: Readonly<Record<string, unknown>>): PlanNode[] {
+		const roots = rootsOf(outputs);
+		// The compiler's own marking, so the walk needs no set of visited nodes.
+		compilation += 1;
+		const mark = compilation;
+		const stack = [...roots];
+		while (stack.length > 0) {
+			const node = stack.pop();
+			if (node === undefined || node.stamp === mark) continue;
+			node.stamp = mark;
+			if (node.code === Op.LoadColumn && node.owner !== this) {
+				throw new E_ATOM_BULK_FOREIGN_COLUMN();
+			}
+			stack.push(...node.inputs);
+		}
+		return roots;
 	}
 
 	#execute(roots: readonly PlanNode[]): string[] {
@@ -739,9 +767,11 @@ function holdsEveryOutput<T extends object>(
 	return Object.keys(outputs).every((key) => results[key] instanceof Decimal);
 }
 
+/** The engine's signal that the 128-bit fast path is too narrow for a run. */
 function isOverflow(error: unknown): boolean {
 	return (
-		error instanceof Error && error.message.includes("[ATOM_BULK_OVERFLOW]")
+		error instanceof Error &&
+		splitEngineMessage(error.message)?.code === "E_ATOM_BULK_OVERFLOW"
 	);
 }
 
